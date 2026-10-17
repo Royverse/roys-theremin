@@ -1,6 +1,7 @@
 // ============================================================================
-// MAIN APPLICATION ENTRY POINT
-// Connects Three.js 3D Theremin Scene, MediaPipe Tracking, and Web Audio
+// MAIN APPLICATION ENTRY POINT (v2)
+// Connects Three.js 3D Theremin Scene, 3D Hand Rig, 1€ MediaPipe Tracking,
+// and Heterodyne Formant Web Audio Synthesis
 // ============================================================================
 
 import './style.css';
@@ -8,6 +9,7 @@ import * as THREE from 'three';
 import { ThereminEngine } from './audio/thereminEngine';
 import { buildThereminModel } from './scene/thereminModel';
 import { createFieldVFX } from './scene/fieldVfx';
+import { HandRig3D } from './scene/handRig3D';
 import { HandTracker } from './tracking/handTracker';
 import { ThereminHUD } from './ui/hud';
 
@@ -22,6 +24,7 @@ class VirtualThereminApp {
 
   private thereminModel!: ReturnType<typeof buildThereminModel>;
   private fieldVFX!: ReturnType<typeof createFieldVFX>;
+  private handRig3D!: HandRig3D;
 
   private clock = new THREE.Clock();
   private mouse = { x: 0, y: 0 };
@@ -78,11 +81,9 @@ class VirtualThereminApp {
     // ------------------------------------------------------------------------
     // LIGHTING: Cinematic Studio Lighting (Warm Tungsten & Platinum Rim)
     // ------------------------------------------------------------------------
-    // Subtle warm ambient fill
     const hemiLight = new THREE.HemisphereLight(0x1e2430, 0x090a0d, 0.85);
     this.scene.add(hemiLight);
 
-    // Key warm spotlight (Simulating high-end studio illumination)
     const keySpot = new THREE.SpotLight(0xffedd5, 85);
     keySpot.position.set(1.2, 2.4, 1.6);
     keySpot.angle = Math.PI / 4.5;
@@ -95,14 +96,12 @@ class VirtualThereminApp {
     keySpot.shadow.bias = -0.0008;
     this.scene.add(keySpot);
 
-    // Soft platinum rim light emphasizing antenna silhouettes
     const rimSpot = new THREE.SpotLight(0xe2e8f0, 32);
     rimSpot.position.set(-2.0, 1.5, -1.0);
     rimSpot.angle = Math.PI / 4;
     rimSpot.penumbra = 0.7;
     this.scene.add(rimSpot);
 
-    // Warm under-cabinet ambient glow
     const fillLight = new THREE.PointLight(0xf59e0b, 1.2, 3);
     fillLight.position.set(0, -0.15, 0.6);
     this.scene.add(fillLight);
@@ -122,10 +121,13 @@ class VirtualThereminApp {
     this.scene.add(floor);
 
     // ------------------------------------------------------------------------
-    // BUILD 3D THEREMIN MODEL & ELECTROMAGNETIC FIELD VFX
+    // BUILD 3D THEREMIN MODEL, 3D HAND RIG, & ELECTROMAGNETIC FIELD VFX
     // ------------------------------------------------------------------------
     this.thereminModel = buildThereminModel();
     this.scene.add(this.thereminModel.group);
+
+    this.handRig3D = new HandRig3D();
+    this.scene.add(this.handRig3D.group);
 
     this.fieldVFX = createFieldVFX(
       this.thereminModel.pitchTipPosition,
@@ -160,7 +162,9 @@ class VirtualThereminApp {
       this.renderer.setSize(width, height);
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-      this.tracker.resize(220, 124);
+      const dock = document.getElementById('camera-dock');
+      const isExpanded = dock?.classList.contains('expanded') ?? false;
+      this.tracker.resize(isExpanded ? 320 : 220, isExpanded ? 180 : 124);
     });
 
     // Subtle 3D camera parallax drift with mouse
@@ -179,7 +183,7 @@ class VirtualThereminApp {
     const delta = this.clock.getDelta();
     const time = this.clock.getElapsedTime();
 
-    // 1. Query Real-Time Gestures from MediaPipe Hand Tracker
+    // 1. Query Real-Time 1€ Filtered Gestures from Hand Tracker
     const gestures = this.tracker.getGestures();
 
     // 2. Dispatch Audio Parameters
@@ -193,14 +197,30 @@ class VirtualThereminApp {
     if (gestures.hasVolumeHand) {
       currentGain = this.engine.setVolume(gestures.volumeHeight, gestures.isFistMuted);
     } else {
-      // Natural smooth decay if left hand is completely out of frame
+      // Natural smooth decay if both hands are out of frame
       currentGain = this.engine.setVolume(0.0, true);
     }
 
-    // 3. Update 3D Theremin Model (Vacuum tube glow pulsation, pilot light, knobs)
+    // 3. Update 3D Theremin Model (Vacuum tube glow pulsation, pilot light)
     this.thereminModel.update(time, currentGain);
 
-    // 4. Update Capacitive Electromagnetic Field VFX & Reactive Lightning Arcs
+    // 4. Update 3D Articulated Hand Skeleton & Capacitive Tethers
+    this.handRig3D.update({
+      time,
+      hasPitchHand: gestures.hasPitchHand,
+      pitchLandmarks3D: gestures.pitchLandmarks3D,
+      pitchControlPos: gestures.pitchWorldPos,
+      pitchAntennaPoint: gestures.pitchAntennaPoint,
+      pitchPos: gestures.pitchPos,
+      hasVolumeHand: gestures.hasVolumeHand,
+      volumeLandmarks3D: gestures.volumeLandmarks3D,
+      volumeControlPos: gestures.volumeWorldPos,
+      volumeLoopPoint: gestures.volumeLoopPoint,
+      volumeGain: currentGain,
+      isFistMuted: gestures.isFistMuted,
+    });
+
+    // 5. Update Capacitive Electromagnetic Field VFX & Reactive Corona Arcs
     this.fieldVFX.update(
       time,
       gestures.hasPitchHand ? gestures.pitchWorldPos : null,
@@ -209,17 +229,17 @@ class VirtualThereminApp {
       currentGain
     );
 
-    // 5. Subtle Camera Parallax
-    const targetCamX = this.mouse.x * 0.08;
-    const targetCamY = 0.32 - this.mouse.y * 0.04;
+    // 6. Subtle Camera Parallax
+    const targetCamX = this.mouse.x * 0.06;
+    const targetCamY = 0.32 - this.mouse.y * 0.03;
     this.camera.position.x += (targetCamX - this.camera.position.x) * delta * 2.5;
     this.camera.position.y += (targetCamY - this.camera.position.y) * delta * 2.5;
     this.camera.lookAt(0, 0.08, 0);
 
-    // 6. Update HUD Elements
+    // 7. Update HUD Elements
     this.hud.update(gestures, currentFreq, currentGain);
 
-    // 7. Render 3D Scene
+    // 8. Render 3D Scene
     this.renderer.render(this.scene, this.camera);
   };
 }

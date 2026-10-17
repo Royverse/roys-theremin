@@ -1,10 +1,18 @@
 // ============================================================================
-// ROY'S THEREMIN — LUXURY NEUMORPHIC CONSOLE & MINIMALIST HUD
-// High-touch, sculptural 2026 audio-visual experience
+// ROY'S THEREMIN — LUXURY NEUMORPHIC CONSOLE & MINIMALIST HUD (v2)
+// High-touch, sculptural 2026 audio-visual experience with Voice Profiles,
+// Spatial Calibration, and 3D Tracking Telemetry
 // ============================================================================
 
-import { ThereminEngine, SCALES } from '../audio/thereminEngine';
+import { ThereminEngine, SCALES, type VoiceProfile } from '../audio/thereminEngine';
 import type { HandTracker, HandGestureResult } from '../tracking/handTracker';
+
+const VOICE_LABELS: Record<VoiceProfile, string> = {
+  clara: 'Clara String',
+  aether: 'Pure Aether',
+  vocal: 'Vocal Choir',
+  moog: 'Moog Brass',
+};
 
 export class ThereminHUD {
   private container: HTMLElement;
@@ -20,12 +28,15 @@ export class ThereminHUD {
   private vuFillEl!: HTMLElement;
   private vuValEl!: HTMLElement;
   private muteIndicatorEl!: HTMLElement;
+  private trackingBadgeEl!: HTMLElement;
+  private voiceLegendEl!: HTMLElement;
   private oscCanvas!: HTMLCanvasElement;
   private oscCtx: CanvasRenderingContext2D | null = null;
   private hintLeftEl!: HTMLElement;
   private hintRightEl!: HTMLElement;
   private audioBtn!: HTMLButtonElement;
   private cameraBtn!: HTMLButtonElement;
+  private calibrateBtn!: HTMLButtonElement;
   private guideModal!: HTMLElement;
   private cameraDockEl!: HTMLElement;
   private cameraLabelEl!: HTMLElement;
@@ -52,7 +63,7 @@ export class ThereminHUD {
           </div>
           <div class="brand-titles">
             <h1 class="brand-name">Roy’s Theremin</h1>
-            <span class="brand-tag">Acoustic Field Synthesizer</span>
+            <span class="brand-tag">Acoustic Field Synthesizer · v2</span>
           </div>
         </div>
 
@@ -70,11 +81,24 @@ export class ThereminHUD {
             <span class="btn-text">Vision</span>
           </button>
 
+          <!-- Spatial Calibrate Button -->
+          <button id="btn-calibrate" class="neumorphic-btn btn-calibrate" title="Calibrate hand neutral center" aria-label="Calibrate">
+            <span class="btn-text">Calibrate</span>
+          </button>
+
+          <!-- Segmented Voice Profile Selector -->
+          <div class="segmented-control voice-control" role="group" aria-label="Voice Timbre">
+            <button class="seg-btn voice-btn active" data-voice="clara" title="Clara Rockmore Warm Cello Formant">Clara</button>
+            <button class="seg-btn voice-btn" data-voice="aether" title="1929 RCA Pure Heterodyne Tube">Aether</button>
+            <button class="seg-btn voice-btn" data-voice="vocal" title="Soprano Choir Vowel Formants">Vocal</button>
+            <button class="seg-btn voice-btn" data-voice="moog" title="Moog Etherwave Rich Brass">Moog</button>
+          </div>
+
           <!-- Segmented Scale Switch -->
-          <div class="segmented-control">
-            <button class="seg-btn active" data-mode="continuous">Analog</button>
-            <button class="seg-btn" data-mode="soft">Magnetic</button>
-            <button class="seg-btn" data-mode="pentatonic">Pentatonic</button>
+          <div class="segmented-control scale-control" role="group" aria-label="Pitch Quantization">
+            <button class="seg-btn scale-btn active" data-mode="continuous">Analog</button>
+            <button class="seg-btn scale-btn" data-mode="soft">Magnetic</button>
+            <button class="seg-btn scale-btn" data-mode="pentatonic">Pentatonic</button>
           </div>
 
           <!-- Technique Guide Button -->
@@ -100,7 +124,7 @@ export class ThereminHUD {
               </div>
               <div class="module-footer">
                 <span id="vu-val" class="sub-metric">0%</span>
-                <span class="sub-legend">Loop Distance</span>
+                <span id="tracking-badge" class="sub-legend">Pointer Field</span>
               </div>
             </div>
 
@@ -119,14 +143,14 @@ export class ThereminHUD {
             <div class="scope-module">
               <div class="module-header">
                 <span class="module-label">Resonance</span>
-                <span class="sub-legend">Triode Mix</span>
+                <span id="voice-legend" class="sub-legend">Clara String</span>
               </div>
               <div class="scope-aperture">
                 <canvas id="osc-canvas" class="osc-canvas" width="160" height="38"></canvas>
               </div>
               <div class="module-footer">
                 <span class="sub-metric">12AX7</span>
-                <span class="sub-legend">4x Oversampled</span>
+                <span class="sub-legend">Hall Convolver</span>
               </div>
             </div>
           </div>
@@ -156,13 +180,13 @@ export class ThereminHUD {
 
       <!-- Spatial Guidance Hints (Discreet, fade on engagement) -->
       <aside id="hint-left" class="spatial-hint hint-left">
-        <span class="hint-key">Left Hand</span>
-        <span class="hint-action">Elevate for volume · Clench fist to mute</span>
+        <span class="hint-key">Left Hand · Volume Loop</span>
+        <span class="hint-action">Elevate for crescendo · Clench fist to mute</span>
       </aside>
 
       <aside id="hint-right" class="spatial-hint hint-right">
-        <span class="hint-key">Right Hand</span>
-        <span class="hint-action">Proximity sets pitch · Finger pinch shapes vibrato</span>
+        <span class="hint-key">Right Hand · Pitch Rod</span>
+        <span class="hint-action">Move right to raise pitch · Finger span shapes vibrato</span>
       </aside>
 
       <!-- Minimalist Technique Modal -->
@@ -171,7 +195,7 @@ export class ThereminHUD {
           <div class="modal-header">
             <div class="modal-title-group">
               <h2 class="modal-title">Léon Theremin & Clara Rockmore</h2>
-              <span class="modal-subtitle">The Principles of Non-Contact Performance</span>
+              <span class="modal-subtitle">Precision 3D Non-Contact Performance · v2</span>
             </div>
             <button id="btn-close-guide" class="modal-close-btn" aria-label="Close">✕</button>
           </div>
@@ -179,24 +203,24 @@ export class ThereminHUD {
             <div class="guide-grid">
               <div class="guide-pillar">
                 <div class="pillar-num">01</div>
-                <h3 class="pillar-title">Right Hand: Aerial Fingering</h3>
-                <p>Arm elevation and horizontal position define the base octave (C2 through C7). Microtonal semitones and Rockmore vibrato are articulated purely through finger span: open your hand to sharpen, curl inward to flatten.</p>
+                <h3 class="pillar-title">Right Hand: 1:1 Spatial Pitch & Aerial Fingering</h3>
+                <p>Moving your right hand toward the vertical pitch rod on the right raises the pitch from C2 to C7 with zero-latency 1€ adaptive filtering. Open or pinch your thumb and index finger to articulate Clara Rockmore microtonal vibrato independent of camera depth.</p>
               </div>
 
               <div class="guide-pillar">
                 <div class="pillar-num">02</div>
-                <h3 class="pillar-title">Left Hand: The Inverted Loop</h3>
-                <p>Resting your palm close to the loop grounds the capacitive field, resulting in complete silence (0 dB). Lift smoothly upward for crescendo. Form a loose fist or dip down for crisp staccato articulation.</p>
+                <h3 class="pillar-title">Left Hand: Volume Loop & Single-Hand Assist</h3>
+                <p>Hovering near the left horizontal loop grounds the field (silence); lifting upward swells the volume. Clench a fist for crisp staccato mute. If only your right hand is raised, <strong>Single-Hand Assist</strong> automatically shapes expression from hand elevation.</p>
               </div>
 
               <div class="guide-pillar">
                 <div class="pillar-num">03</div>
-                <h3 class="pillar-title">Magnetic Pitch Assist</h3>
-                <p>The continuous theremin is naturally fretless. For melodic intuition, engage <strong>Magnetic</strong> mode for gentle 12-EDO semitone centering, or <strong>Pentatonic</strong> for pure harmonic harmony.</p>
+                <h3 class="pillar-title">Formant Voices & Spatial Calibration</h3>
+                <p>Switch between <strong>Clara</strong> (warm cello), <strong>Aether</strong> (1929 RCA tube), <strong>Vocal</strong> (choir formants), and <strong>Moog</strong> (rich brass). Click <strong>Calibrate</strong> while holding your hands in a comfortable posture to center the sensing field to your space.</p>
               </div>
             </div>
             <footer class="modal-footer">
-              <span class="fallback-note">Desktop Note: You can also explore sounds by moving your mouse (Screen Right = Pitch, Screen Left = Volume, Click = Mute).</span>
+              <span class="fallback-note">Desktop Pointer Mode: Move mouse horizontally for Pitch, vertically for Volume, Scroll Wheel for Vibrato, and Click or press Spacebar for Staccato Mute. Click the camera dock to expand.</span>
             </footer>
           </div>
         </div>
@@ -212,12 +236,15 @@ export class ThereminHUD {
     this.vuFillEl = this.container.querySelector('#vu-fill')!;
     this.vuValEl = this.container.querySelector('#vu-val')!;
     this.muteIndicatorEl = this.container.querySelector('#mute-indicator')!;
+    this.trackingBadgeEl = this.container.querySelector('#tracking-badge')!;
+    this.voiceLegendEl = this.container.querySelector('#voice-legend')!;
     this.oscCanvas = this.container.querySelector('#osc-canvas') as HTMLCanvasElement;
     this.oscCtx = this.oscCanvas.getContext('2d');
     this.hintLeftEl = this.container.querySelector('#hint-left')!;
     this.hintRightEl = this.container.querySelector('#hint-right')!;
     this.audioBtn = this.container.querySelector('#btn-audio') as HTMLButtonElement;
     this.cameraBtn = this.container.querySelector('#btn-camera') as HTMLButtonElement;
+    this.calibrateBtn = this.container.querySelector('#btn-calibrate') as HTMLButtonElement;
     this.guideModal = this.container.querySelector('#guide-modal')!;
 
     this.cameraDockEl = document.getElementById('camera-dock')!;
@@ -244,9 +271,14 @@ export class ThereminHUD {
       this.cameraBtn.disabled = false;
 
       if (active) {
+        // Also ensure audio is started when user engages Vision so they immediately hear their hands
+        if (!this.engine.getIsRunning()) {
+          await this.engine.initAudio();
+          this.audioBtn.classList.add('active');
+        }
         this.cameraBtn.classList.add('active');
         this.cameraDockEl.classList.add('active');
-        if (this.cameraLabelEl) this.cameraLabelEl.textContent = 'Tracking Active';
+        if (this.cameraLabelEl) this.cameraLabelEl.textContent = '1€ Tracking Active';
       } else {
         this.cameraBtn.classList.remove('active');
         this.cameraDockEl.classList.remove('active');
@@ -254,11 +286,49 @@ export class ThereminHUD {
       }
     });
 
-    // Segmented Mode buttons
-    const segButtons = this.container.querySelectorAll<HTMLButtonElement>('.seg-btn');
-    segButtons.forEach((btn) => {
+    // Spatial Calibrate button
+    this.calibrateBtn.addEventListener('click', () => {
+      const labelSpan = this.calibrateBtn.querySelector('.btn-text');
+      const result = this.tracker.calibrateSpace();
+      if (result.calibrated) {
+        this.calibrateBtn.classList.add('active');
+        if (labelSpan) labelSpan.textContent = 'Calibrated';
+        setTimeout(() => {
+          if (labelSpan) labelSpan.textContent = 'Calibrate';
+        }, 1600);
+      } else {
+        this.calibrateBtn.classList.remove('active');
+        if (labelSpan) labelSpan.textContent = 'Reset';
+        setTimeout(() => {
+          if (labelSpan) labelSpan.textContent = 'Calibrate';
+        }, 1200);
+      }
+    });
+
+    // Click camera dock to toggle expanded preview
+    this.cameraDockEl.addEventListener('click', () => {
+      this.cameraDockEl.classList.toggle('expanded');
+      const isExpanded = this.cameraDockEl.classList.contains('expanded');
+      this.tracker.resize(isExpanded ? 320 : 220, isExpanded ? 180 : 124);
+    });
+
+    // Voice Profile buttons
+    const voiceButtons = this.container.querySelectorAll<HTMLButtonElement>('.voice-btn');
+    voiceButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
-        segButtons.forEach((b) => b.classList.remove('active'));
+        voiceButtons.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        const voiceId = (btn.dataset.voice || 'clara') as VoiceProfile;
+        this.engine.setVoiceProfile(voiceId);
+        this.voiceLegendEl.textContent = VOICE_LABELS[voiceId];
+      });
+    });
+
+    // Segmented Scale buttons
+    const scaleButtons = this.container.querySelectorAll<HTMLButtonElement>('.scale-btn');
+    scaleButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        scaleButtons.forEach((b) => b.classList.remove('active'));
         btn.classList.add('active');
         const mode = btn.dataset.mode;
         if (mode === 'continuous') {
@@ -313,12 +383,26 @@ export class ThereminHUD {
     }
 
     const sign = noteInfo.cents > 0 ? '+' : '';
-    this.centsTextEl.textContent = isTuned ? `In Tune (±${Math.abs(noteInfo.cents)}c)` : `${sign}${noteInfo.cents}c`;
+    this.centsTextEl.textContent = isTuned
+      ? `In Tune (±${Math.abs(noteInfo.cents)}c)`
+      : `${sign}${noteInfo.cents}c`;
 
-    // 2. Dynamics / Volume Meter
+    // 2. Dynamics / Volume Meter & Tracking Mode Telemetry
     const volumePercent = Math.min(100, Math.max(0, currentGain * 100));
     this.vuFillEl.style.width = `${volumePercent}%`;
     this.vuValEl.textContent = `${Math.round(volumePercent)}%`;
+
+    if (this.tracker.getIsCameraActive()) {
+      if (gestures.inputMode === 'camera-single') {
+        this.trackingBadgeEl.textContent = '1-Hand Assist';
+      } else if (gestures.hasPitchHand && gestures.hasVolumeHand) {
+        this.trackingBadgeEl.textContent = 'Dual-Hand 3D';
+      } else {
+        this.trackingBadgeEl.textContent = 'Vision Ready';
+      }
+    } else {
+      this.trackingBadgeEl.textContent = 'Pointer Field';
+    }
 
     const isMuted = gestures.isFistMuted || currentGain < 0.015;
     if (isMuted) {

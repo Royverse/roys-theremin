@@ -107,28 +107,37 @@ export function buildThereminModel(): ThereminModelParts {
   group.add(faceplate);
 
   // --------------------------------------------------------------------------
-  // 2. RIGHT PITCH ANTENNA (Vertical Chrome Rod)
+  // 2. RIGHT PITCH ANTENNA (Vertical Chrome Rod with Side Mount at x = +0.26m)
   // --------------------------------------------------------------------------
+  // Right flank horizontal mounting collar & arm (matching Moog Etherwave geometry)
+  const pitchSideMount = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.008, 0.01, 0.04, 16),
+    chromeMaterial
+  );
+  pitchSideMount.rotation.z = Math.PI / 2;
+  pitchSideMount.position.set(0.245, 0.035, 0);
+  group.add(pitchSideMount);
+
   // Mounting base collar
-  const pitchCollarGeo = new THREE.CylinderGeometry(0.012, 0.014, 0.02, 24);
+  const pitchCollarGeo = new THREE.CylinderGeometry(0.011, 0.013, 0.024, 24);
   const pitchCollar = new THREE.Mesh(pitchCollarGeo, chromeMaterial);
-  pitchCollar.position.set(0.19, 0.065, 0);
+  pitchCollar.position.set(0.26, 0.055, 0);
   group.add(pitchCollar);
 
-  // Vertical rod (0.46m height)
+  // Vertical rod (0.46m height, from y = 0.065m to 0.525m)
   const pitchRodGeo = new THREE.CylinderGeometry(0.0035, 0.005, 0.46, 24);
   const pitchAntenna = new THREE.Mesh(pitchRodGeo, chromeMaterial);
   pitchAntenna.castShadow = true;
-  pitchAntenna.position.set(0.19, 0.065 + 0.23, 0);
+  pitchAntenna.position.set(0.26, 0.065 + 0.23, 0);
   group.add(pitchAntenna);
 
   // Top sphere cap
   const pitchCapGeo = new THREE.SphereGeometry(0.007, 16, 16);
   const pitchCap = new THREE.Mesh(pitchCapGeo, chromeMaterial);
-  pitchCap.position.set(0.19, 0.065 + 0.46, 0);
+  pitchCap.position.set(0.26, 0.065 + 0.46, 0);
   group.add(pitchCap);
 
-  const pitchTipPosition = new THREE.Vector3(0.19, 0.065 + 0.46, 0);
+  const pitchTipPosition = new THREE.Vector3(0.26, 0.065 + 0.46, 0);
 
   // --------------------------------------------------------------------------
   // 3. LEFT VOLUME ANTENNA (Horizontal Chrome Loop)
@@ -160,7 +169,7 @@ export function buildThereminModel(): ThereminModelParts {
   volumeAntenna.castShadow = true;
   group.add(volumeAntenna);
 
-  const volumeLoopCenter = new THREE.Vector3(-0.36, 0.02, 0.0);
+  const volumeLoopCenter = new THREE.Vector3(-0.35, 0.02, 0.0);
 
   // --------------------------------------------------------------------------
   // 4. FRONT CONTROLS (Bakelite Knobs & Lettering Plate)

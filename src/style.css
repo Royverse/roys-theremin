@@ -71,11 +71,11 @@ body {
   position: absolute;
   top: 80px;
   right: 28px;
-  width: 200px;
-  height: 114px;
+  width: 220px;
+  height: 124px;
   border-radius: 16px;
   overflow: hidden;
-  background: rgba(14, 16, 21, 0.7);
+  background: rgba(14, 16, 21, 0.78);
   backdrop-filter: blur(20px);
   border: 1px solid var(--border-subtle);
   box-shadow: 
@@ -83,7 +83,15 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   z-index: 15;
   transition: all 0.35s var(--ease-spring);
-  opacity: 0.85;
+  opacity: 0.9;
+  cursor: pointer;
+}
+
+.camera-dock.expanded {
+  width: 320px;
+  height: 180px;
+  opacity: 1;
+  border-color: rgba(245, 158, 11, 0.35);
 }
 
 .camera-dock:hover {
@@ -244,8 +252,10 @@ body {
 /* Control Cluster */
 .control-cluster {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 /* Neumorphic Push Buttons */

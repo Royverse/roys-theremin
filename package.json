@@ -1,12 +1,29 @@
 {
-  "name": "new-folder",
-  "private": true,
-  "version": "0.0.0",
+  "name": "roys-theremin",
+  "version": "2.0.0",
+  "description": "Roy's Theremin — 3D WebGL & MediaPipe Acoustic Field Synthesizer with 1€ Adaptive Hand Tracking and Heterodyne Formant Synthesis",
   "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Royverse/roys-theremin.git"
+  },
+  "homepage": "https://roys-theremin.netlify.app",
+  "keywords": [
+    "theremin",
+    "threejs",
+    "webgl",
+    "mediapipe",
+    "hand-tracking",
+    "web-audio-api",
+    "one-euro-filter",
+    "synthesizer"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",

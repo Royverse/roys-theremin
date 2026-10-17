@@ -130,31 +130,6 @@ export function createFieldVFX(
   const arcLines = new THREE.LineSegments(arcGeo, arcMaterial);
   group.add(arcLines);
 
-  // --------------------------------------------------------------------------
-  // 4. MINIMALIST 3D HAND RINGS (Instead of heavy wireframe balls)
-  // --------------------------------------------------------------------------
-  const ringGeo = new THREE.RingGeometry(0.016, 0.019, 32);
-
-  const pitchRingMat = new THREE.MeshBasicMaterial({
-    color: 0xdbeafe,
-    transparent: true,
-    opacity: 0.45,
-    side: THREE.DoubleSide,
-  });
-  const pitchRing = new THREE.Mesh(ringGeo, pitchRingMat);
-  pitchRing.visible = false;
-  group.add(pitchRing);
-
-  const volumeRingMat = new THREE.MeshBasicMaterial({
-    color: 0xf59e0b,
-    transparent: true,
-    opacity: 0.45,
-    side: THREE.DoubleSide,
-  });
-  const volumeRing = new THREE.Mesh(ringGeo, volumeRingMat);
-  volumeRing.visible = false;
-  group.add(volumeRing);
-
   function generateArc(
     start: THREE.Vector3,
     end: THREE.Vector3,
@@ -192,6 +167,7 @@ export function createFieldVFX(
   }
 
   let arcFrameCounter = 0;
+  const rodContactPoint = new THREE.Vector3();
 
   const update = (
     time: number,
@@ -223,8 +199,8 @@ export function createFieldVFX(
         const dz = pitchHandPos.z - z;
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-        if (dist < 0.30) {
-          const pull = (1.0 - dist / 0.30) * 0.05;
+        if (dist < 0.30 && dist > 0.001) {
+          const pull = (1.0 - dist / 0.30) * 0.055;
           x += (dx / dist) * pull;
           y += (dy / dist) * pull;
           z += (dz / dist) * pull;
@@ -256,8 +232,8 @@ export function createFieldVFX(
         const dz = volumeHandPos.z - z;
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-        if (dist < 0.28) {
-          const pull = (1.0 - dist / 0.28) * 0.045;
+        if (dist < 0.28 && dist > 0.001) {
+          const pull = (1.0 - dist / 0.28) * 0.048;
           x += (dx / dist) * pull;
           y += (dy / dist) * pull;
           z += (dz / dist) * pull;
@@ -270,37 +246,18 @@ export function createFieldVFX(
     }
     volumeBaseGeo.attributes.position.needsUpdate = true;
 
-    // 3. Update Minimal 3D Hand Tracking Rings
-    if (pitchHandPos) {
-      pitchRing.position.copy(pitchHandPos);
-      pitchRing.lookAt(pitchTipPos);
-      pitchRing.visible = true;
-      const s = 1.0 + Math.sin(time * 6.0) * 0.08;
-      pitchRing.scale.set(s, s, s);
-    } else {
-      pitchRing.visible = false;
-    }
-
-    if (volumeHandPos) {
-      volumeRing.position.copy(volumeHandPos);
-      volumeRing.rotation.x = Math.PI / 2;
-      volumeRing.visible = true;
-      const s = 0.9 + volumeGain * 0.4;
-      volumeRing.scale.set(s, s, s);
-    } else {
-      volumeRing.visible = false;
-    }
-
-    // 4. Update Subtle Corona Discharge Filaments
+    // 3. Update Subtle Corona Discharge Filaments
     arcFrameCounter++;
     if (arcFrameCounter % 3 === 0) {
       const arcPos = arcGeo.attributes.position.array as Float32Array;
       let arcIndex = 0;
 
       if (pitchHandPos) {
-        const dist = pitchHandPos.distanceTo(pitchTipPos);
+        const clampedRodY = Math.max(0.05, Math.min(pitchTipPos.y, pitchHandPos.y));
+        rodContactPoint.set(pitchTipPos.x, clampedRodY, pitchTipPos.z);
+        const dist = pitchHandPos.distanceTo(rodContactPoint);
         if (dist < 0.24) {
-          generateArc(pitchTipPos, pitchHandPos, arcPos, arcIndex * ARC_SEGMENTS * 6, 0.025);
+          generateArc(rodContactPoint, pitchHandPos, arcPos, arcIndex * ARC_SEGMENTS * 6, 0.022);
           arcIndex++;
         }
       }
@@ -308,7 +265,7 @@ export function createFieldVFX(
       if (volumeHandPos) {
         const dist = volumeHandPos.distanceTo(volumeLoopPos);
         if (dist < 0.22 && volumeGain > 0.08) {
-          generateArc(volumeLoopPos, volumeHandPos, arcPos, arcIndex * ARC_SEGMENTS * 6, 0.02);
+          generateArc(volumeLoopPos, volumeHandPos, arcPos, arcIndex * ARC_SEGMENTS * 6, 0.018);
           arcIndex++;
         }
       }
@@ -333,9 +290,6 @@ export function createFieldVFX(
     volumePointMaterial.dispose();
     arcGeo.dispose();
     arcMaterial.dispose();
-    ringGeo.dispose();
-    pitchRingMat.dispose();
-    volumeRingMat.dispose();
   };
 
   return { group, update, dispose };
