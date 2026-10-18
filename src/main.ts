@@ -41,6 +41,7 @@ class SpatialAtelierApp {
   private clock = new THREE.Clock();
   private mouse = { x: 0, y: 0 };
   private activeInstrumentId: InstrumentId = 'theremin';
+  private enginesInitialized = false;
 
   constructor() {
     this.initAudioEngines();
@@ -62,26 +63,38 @@ class SpatialAtelierApp {
     this.laserHarpEngine = new LaserHarpEngine();
   }
 
-  private async activateAudio(): Promise<boolean> {
+  private async ensureAudioActive(): Promise<boolean> {
     try {
       const ctx = await this.audioBus.initAudio();
       const masterIn = this.audioBus.getMasterInput();
       if (!masterIn) return false;
 
-      // Connect Theremin
       await this.thereminEngine.initAudio();
 
-      // Connect other 4 engines
-      this.cristalEngine.initAudio(ctx, masterIn);
-      this.handpanEngine.initAudio(ctx, masterIn);
-      this.martenotEngine.initAudio(ctx, masterIn);
-      this.laserHarpEngine.initAudio(ctx, masterIn);
+      if (!this.enginesInitialized) {
+        this.cristalEngine.initAudio(ctx, masterIn);
+        this.handpanEngine.initAudio(ctx, masterIn);
+        this.martenotEngine.initAudio(ctx, masterIn);
+        this.laserHarpEngine.initAudio(ctx, masterIn);
+        this.enginesInitialized = true;
+      }
 
+      this.hud?.setAudioActive(true);
       return true;
     } catch (err) {
       console.error('Audio initialization error:', err);
       return false;
     }
+  }
+
+  private async toggleAudio(): Promise<boolean> {
+    if (this.audioBus.getIsRunning()) {
+      this.audioBus.stop();
+      this.thereminEngine.stop();
+      this.hud?.setAudioActive(false);
+      return false;
+    }
+    return this.ensureAudioActive();
   }
 
   // --------------------------------------------------------------------------
@@ -187,6 +200,13 @@ class SpatialAtelierApp {
       if (id !== 'handpan') this.handpanEngine.mute();
       if (id !== 'martenot') this.martenotEngine.mute();
       if (id !== 'laserharp') this.laserHarpEngine.mute();
+
+      // Ensure audio is active when switching instruments and sound a gentle welcome Ding on Handpan
+      void this.ensureAudioActive().then((active) => {
+        if (active && id === 'handpan') {
+          this.handpanEngine.strikeTone(0, 0.56, 0);
+        }
+      });
     };
 
     this.tracker.navigator.setOnInstrumentChange(handleSwitch);
@@ -195,7 +215,7 @@ class SpatialAtelierApp {
       hudOverlay,
       this.tracker,
       handleSwitch,
-      () => this.activateAudio()
+      () => this.toggleAudio()
     );
   }
 
@@ -223,6 +243,20 @@ class SpatialAtelierApp {
       this.mouse.x = (e.clientX / window.innerWidth - 0.5) * 2;
       this.mouse.y = (e.clientY / window.innerHeight - 0.5) * 2;
     });
+
+    // Auto-start audio if the user clicks or taps directly on the 3D stage
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if ((e.target as HTMLElement | null)?.closest('#btn-audio, .modal-card')) {
+          return;
+        }
+        if (!this.audioBus.getIsRunning()) {
+          void this.ensureAudioActive();
+        }
+      },
+      { passive: true }
+    );
   }
 
   // --------------------------------------------------------------------------
@@ -276,7 +310,9 @@ class SpatialAtelierApp {
         const res = this.handpanEngine.update(
           time,
           gestures.leftKinematics,
-          gestures.rightKinematics
+          gestures.rightKinematics,
+          gestures.volumeLandmarks3D,
+          gestures.pitchLandmarks3D
         );
         currentFreq = res.primaryFreq;
         currentGain = res.primaryGain;
@@ -317,6 +353,9 @@ class SpatialAtelierApp {
       gestures.portalState
     );
 
+    // Clear one-shot strike triggers after audio and 3D stage have consumed them
+    this.tracker.consumeStrikes();
+
     // 4. Update 3D Articulated Hand Skeleton & Probes
     this.handRig3D.update({
       time,
@@ -331,6 +370,8 @@ class SpatialAtelierApp {
       volumeLoopPoint: gestures.volumeLoopPoint,
       volumeGain: currentGain,
       isFistMuted: gestures.isFistMuted,
+      isTheremin: this.activeInstrumentId === 'theremin',
+      stagePointerPos: gestures.rightKinematics.hasHand ? gestures.rightKinematics.rawPos : null,
     });
 
     // 5. Subtle Camera Parallax

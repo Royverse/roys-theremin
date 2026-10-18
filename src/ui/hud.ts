@@ -394,6 +394,14 @@ export class ThereminHUD {
     });
   }
 
+  public setAudioActive(active: boolean): void {
+    if (active) {
+      this.audioBtn.classList.add('active');
+    } else {
+      this.audioBtn.classList.remove('active');
+    }
+  }
+
   public setActiveInstrument(id: InstrumentId): void {
     if (this.currentActiveInstrument === id) return;
     this.currentActiveInstrument = id;

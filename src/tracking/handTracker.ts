@@ -15,6 +15,7 @@ import {
   type CalibrationBounds,
   DEFAULT_CALIBRATION,
   WORLD_SPACE,
+  projectScreenToWorld,
   projectHandLandmarksTo3D,
   computePitchKinematics,
   computeVolumeKinematics,
@@ -708,7 +709,7 @@ export class HandTracker {
       0.0
     );
 
-    // Compute pointer velocity for gesture navigator
+    // Compute pointer velocity in 3D world space
     const pVx = (normX - this.lastPointerPos.x) / dt;
     const pVy = (normY - this.lastPointerPos.y) / dt;
     this.lastPointerPos = { x: normX, y: normY };
@@ -717,20 +718,29 @@ export class HandTracker {
     this.gestureState.portalState = this.navigator.update(dt, null, null);
     this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
 
-    // Synthesize kinematic states for multi-instrument mouse testing
+    // Synthesize full-stage 3D kinematic state for multi-instrument pointer control
+    const stageWorldPos = projectScreenToWorld(normX, normY, 0);
+    const worldVx = pVx * WORLD_SPACE.SPAN_X;
+    const worldVy = -pVy * WORLD_SPACE.SPAN_Y;
+    const worldSpeed = Math.hypot(worldVx, worldVy);
+
     const rightK = this.gestureState.rightKinematics;
     rightK.hasHand = true;
-    rightK.rawPos.set(pitchWorldX, pitchWorldY, 0.05);
-    rightK.velocity.set(pVx, pVy, 0);
-    rightK.rubEnergy = Math.max(0, Math.min(1, Math.sqrt(pVx * pVx + pVy * pVy) * 0.8));
+    rightK.rawPos.copy(stageWorldPos);
+    rightK.velocity.set(worldVx, worldVy, 0);
+    rightK.rubEnergy = Math.max(0, Math.min(1, worldSpeed * 0.85));
+    rightK.wristRoll = Math.max(-1, Math.min(1, (normX - 0.5) * 2.0));
+    rightK.palmTilt = Math.max(-1, Math.min(1, (0.5 - normY) * 2.0));
     rightK.pinchAperture = Math.max(0, Math.min(1, (this.mouseVibratoWheel + 1.0) * 0.5));
 
+    // In single-pointer mode, keep secondary left kinematics inactive so it doesn't ghost-trigger notes
     const leftK = this.gestureState.leftKinematics;
-    leftK.hasHand = true;
+    leftK.hasHand = false;
+    leftK.isStrike = false;
+    leftK.strikeVelocity = 0;
     leftK.rawPos.set(volWorldX, volWorldY, 0.05);
-    leftK.velocity.set(pVx, pVy, 0);
-    leftK.rubEnergy = rightK.rubEnergy;
-    leftK.pinchAperture = rightK.pinchAperture;
+    leftK.velocity.set(0, 0, 0);
+    leftK.rubEnergy = 0;
   }
 
   private setupMouseAndTouchFallback(): void {
@@ -748,20 +758,34 @@ export class HandTracker {
       { passive: true }
     );
 
+    window.addEventListener(
+      'touchstart',
+      (e) => {
+        if (!this.mouseFallbackActive || e.touches.length === 0) return;
+        if ((e.target as HTMLElement | null)?.closest('button, .sculptural-console, .modal-card')) {
+          return;
+        }
+        const t = e.touches[0];
+        this.updateFromPointer(t.clientX, t.clientY);
+        this.rightKinematicObserver.triggerManualStrike(0.88);
+        this.gestureState.rightKinematics.isStrike = true;
+        this.gestureState.rightKinematics.strikeVelocity = 0.88;
+      },
+      { passive: true }
+    );
+
     window.addEventListener('mousedown', (e) => {
       if (!this.mouseFallbackActive) return;
       if ((e.target as HTMLElement | null)?.closest('button, .sculptural-console, .modal-card')) {
         return;
       }
+      this.updateFromPointer(e.clientX, e.clientY);
       this.isMouseDown = true;
       this.gestureState.isFistMuted = true;
-      // In mouse mode, clicking acts as a percussive strike for Handpan
-      this.rightKinematicObserver.triggerManualStrike(0.85);
-      this.leftKinematicObserver.triggerManualStrike(0.85);
+      // In pointer mode, clicking acts as a direct percussive strike at the cursor locus
+      this.rightKinematicObserver.triggerManualStrike(0.88);
       this.gestureState.rightKinematics.isStrike = true;
-      this.gestureState.rightKinematics.strikeVelocity = 0.85;
-      this.gestureState.leftKinematics.isStrike = true;
-      this.gestureState.leftKinematics.strikeVelocity = 0.85;
+      this.gestureState.rightKinematics.strikeVelocity = 0.88;
     });
 
     window.addEventListener('mouseup', () => {
@@ -800,10 +824,17 @@ export class HandTracker {
   }
 
   // --------------------------------------------------------------------------
-  // GETTERS & RESIZE
+  // GETTERS, STRIKE CONSUMPTION & RESIZE
   // --------------------------------------------------------------------------
   public getGestures(): HandGestureResult {
     return this.gestureState;
+  }
+
+  public consumeStrikes(): void {
+    this.gestureState.leftKinematics.isStrike = false;
+    this.gestureState.leftKinematics.strikeVelocity = 0;
+    this.gestureState.rightKinematics.isStrike = false;
+    this.gestureState.rightKinematics.strikeVelocity = 0;
   }
 
   public resize(width: number, height: number): void {

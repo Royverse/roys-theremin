@@ -100,6 +100,7 @@ export class HandKinematicObserver {
     this.state.velocity.set(vx, vy, vz);
 
     // 2. Instantaneous Acceleration & Smoothing (alpha = 0.35)
+    const prevVy = this.lastVelocity.y;
     const rawAx = (vx - this.lastVelocity.x) / dt;
     const rawAy = (vy - this.lastVelocity.y) / dt;
     const rawAz = (vz - this.lastVelocity.z) / dt;
@@ -122,14 +123,15 @@ export class HandKinematicObserver {
     this.state.rubEnergy = Math.max(0, Math.min(1, this.rubEnergy));
 
     // 4. Ballistic Strike Detection (Handpan & Percussion)
-    // Downward velocity followed by sharp upward deceleration spike
-    const isDownward = this.lastVelocity.y < -0.16;
-    const isDecelSpike = this.smoothedAcc.y > 2.6;
+    // Detects either a downward/forward finger-tap rebound or a brisk downward flick
+    const downSpeed = Math.max(0, -Math.min(vy, rawVy, prevVy));
+    const isReboundTap = prevVy < -0.075 && (rawAy > 0.65 || vy > prevVy + 0.02);
+    const isBriskFlick = rawVy < -0.24 && rawAy > 0.35;
     const canStrike = (time - this.lastStrikeTime) > this.strikeCooldown;
 
-    if (canStrike && isDownward && isDecelSpike) {
+    if (canStrike && (isReboundTap || isBriskFlick)) {
       this.state.isStrike = true;
-      this.state.strikeVelocity = Math.max(0.15, Math.min(1.0, Math.abs(this.lastVelocity.y) / 1.35));
+      this.state.strikeVelocity = Math.max(0.32, Math.min(1.0, 0.32 + downSpeed / 0.85));
       this.lastStrikeTime = time;
     }
 

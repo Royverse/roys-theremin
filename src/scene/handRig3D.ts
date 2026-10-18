@@ -45,6 +45,9 @@ export interface HandRig3DUpdateParams {
   volumeLoopPoint: THREE.Vector3 | null;
   volumeGain: number;
   isFistMuted: boolean;
+
+  isTheremin?: boolean;
+  stagePointerPos?: THREE.Vector3 | null;
 }
 
 export class HandRig3D {
@@ -296,6 +299,8 @@ export class HandRig3D {
       volumeLoopPoint,
       volumeGain,
       isFistMuted,
+      isTheremin = true,
+      stagePointerPos = null,
     } = params;
 
     // 1. Update 3D Articulated Hands (when webcam landmarks are present)
@@ -305,6 +310,22 @@ export class HandRig3D {
       hasVolumeHand ? volumeLandmarks3D : null,
       isFistMuted
     );
+
+    if (!isTheremin) {
+      this.pitchTetherLine.visible = false;
+      this.pitchRodRing.visible = false;
+      this.volumeProbe.visible = false;
+      this.volumeTetherLine.visible = false;
+      this.volumeLoopHalo.visible = false;
+
+      if (!pitchLandmarks3D && stagePointerPos) {
+        this.pitchProbe.visible = true;
+        this.pitchProbe.position.set(stagePointerPos.x, stagePointerPos.y, 0.22);
+      } else {
+        this.pitchProbe.visible = false;
+      }
+      return;
+    }
 
     // 2. Update Pitch Control Probe, Tether & Sliding Antenna Ring
     if (hasPitchHand && pitchControlPos && pitchAntennaPoint) {
