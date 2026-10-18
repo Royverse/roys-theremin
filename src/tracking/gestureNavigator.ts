@@ -1,12 +1,13 @@
 // ============================================================================
-// ZERO-CLICK GESTURE NAVIGATOR & OVERHEAD CROWN PORTAL SWITCHER
-// Allows hands-free instrument switching via overhead dwell and wrist gestures
+// ZERO-CLICK GESTURE NAVIGATOR — LATCHED PEACE SIGN (✌️) SWITCHER (v3.1)
+// Scale-invariant 2D hand gesture recognition that cycles between instruments
+// without false triggers or infinite looping.
 // ============================================================================
 
-import * as THREE from 'three';
+import type { NormalizedLandmark } from '../types/mediapipe';
 import type { InstrumentId, PortalHoverState } from '../types/atelier';
 
-const ORDERED_INSTRUMENTS: InstrumentId[] = [
+export const ORDERED_INSTRUMENTS: InstrumentId[] = [
   'theremin',
   'cristal',
   'handpan',
@@ -14,24 +15,49 @@ const ORDERED_INSTRUMENTS: InstrumentId[] = [
   'laserharp',
 ];
 
+/**
+ * Scale-invariant Peace Sign (✌️ / V-Sign) classifier.
+ * Checks that Index & Middle are extended with distinct separation,
+ * while Ring & Pinky remain curled into the palm.
+ */
+export function isPeaceSignGesture(landmarks: NormalizedLandmark[] | null | undefined): boolean {
+  if (!landmarks || landmarks.length < 21) return false;
+
+  const p0 = landmarks[0];
+  const p9 = landmarks[9];
+  const palmScale = Math.max(0.035, Math.hypot(p9.x - p0.x, p9.y - p0.y));
+
+  const normDist = (i: number, j: number): number =>
+    Math.hypot(landmarks[i].x - landmarks[j].x, landmarks[i].y - landmarks[j].y) / palmScale;
+
+  // Index extended & pointing higher than PIP
+  const indexExtended =
+    normDist(8, 0) > 1.52 && normDist(8, 5) > 0.68 && landmarks[8].y < landmarks[6].y;
+
+  // Middle extended & pointing higher than PIP
+  const middleExtended =
+    normDist(12, 0) > 1.52 && normDist(12, 9) > 0.68 && landmarks[12].y < landmarks[10].y;
+
+  // Ring & Pinky curled toward palm
+  const ringCurled = normDist(16, 0) < 1.34 || normDist(16, 13) < 0.48;
+  const pinkyCurled = normDist(20, 0) < 1.32 || normDist(20, 17) < 0.48;
+
+  // Distinct V-spread between index and middle fingertips
+  const vSpread = normDist(8, 12) > 0.24;
+
+  return indexExtended && middleExtended && ringCurled && pinkyCurled && vSpread;
+}
+
 export class GestureNavigator {
   private activeInstrument: InstrumentId = 'theremin';
   private onInstrumentChange?: (id: InstrumentId) => void;
 
-  // Dwell state
-  private hoveredIndex: number | null = null;
-  private dwellTime = 0;
-  private readonly targetDwellTime = 0.75; // 750ms dwell to switch
-
-  // Wrist-cross state
-  private wristCrossTime = 0;
-  private readonly wristCrossThreshold = 0.12; // 12cm distance
-  private readonly targetWristCrossTime = 0.65;
-  private lastSwitchTime = 0;
-  private readonly switchCooldown = 1.2; // 1.2s cooldown between switches
-
-  // Swipe detection
-  private lastSwipeTime = 0;
+  // Latch State Machine (Prevents any looping)
+  private holdDuration = 0;
+  private releaseDuration = 0;
+  private isLatched = false;
+  private readonly HOLD_THRESHOLD = 0.55; // 550ms hold to trigger
+  private readonly RELEASE_THRESHOLD = 0.30; // 300ms neutral hand to re-arm
 
   private portalState: PortalHoverState = {
     isActive: false,
@@ -79,93 +105,62 @@ export class GestureNavigator {
     this.setInstrument(ORDERED_INSTRUMENTS[prevIdx]);
   }
 
-  public update(
-    time: number,
-    dt: number,
-    hasLeft: boolean,
-    hasRight: boolean,
-    leftLandmarks: THREE.Vector3[] | null,
-    rightLandmarks: THREE.Vector3[] | null,
-    leftScreenPos: { x: number; y: number } | null,
-    rightScreenPos: { x: number; y: number } | null,
-    rightVelocity?: THREE.Vector3,
-    leftVelocity?: THREE.Vector3
-  ): PortalHoverState {
-    // 1. Check Two-Hand Wrist-Cross Quick Cycle
-    if (hasLeft && hasRight && leftLandmarks && rightLandmarks) {
-      const leftWrist = leftLandmarks[0];
-      const rightWrist = rightLandmarks[0];
-      const dist = leftWrist.distanceTo(rightWrist);
+  public getNextInstrument(): InstrumentId {
+    const idx = ORDERED_INSTRUMENTS.indexOf(this.activeInstrument);
+    const nextIdx = (idx + 1) % ORDERED_INSTRUMENTS.length;
+    return ORDERED_INSTRUMENTS[nextIdx];
+  }
 
-      // Wrists close together in upper half of stage
-      if (dist < this.wristCrossThreshold && (leftWrist.y > 0.10 || rightWrist.y > 0.10)) {
-        this.wristCrossTime += dt;
-        if (this.wristCrossTime >= this.targetWristCrossTime && (time - this.lastSwitchTime) > this.switchCooldown) {
+  public update(
+    dt: number,
+    leftLandmarks2D: NormalizedLandmark[] | null,
+    rightLandmarks2D: NormalizedLandmark[] | null
+  ): PortalHoverState {
+    const leftPeace = isPeaceSignGesture(leftLandmarks2D);
+    const rightPeace = isPeaceSignGesture(rightLandmarks2D);
+    const peaceDetected = leftPeace || rightPeace;
+
+    const nextTarget = this.getNextInstrument();
+
+    if (peaceDetected) {
+      this.releaseDuration = 0;
+
+      // Extract screen coordinates of the active peace hand
+      const activeLm = rightPeace ? rightLandmarks2D : leftLandmarks2D;
+      const screenX = activeLm ? activeLm[8].x : 0.5;
+      const screenY = activeLm ? activeLm[8].y : 0.2;
+
+      if (!this.isLatched) {
+        this.holdDuration += dt;
+        const progress = Math.min(1.0, this.holdDuration / this.HOLD_THRESHOLD);
+
+        this.portalState.isActive = true;
+        this.portalState.targetInstrument = nextTarget;
+        this.portalState.progress = progress;
+        this.portalState.screenX = screenX;
+        this.portalState.screenY = screenY;
+
+        if (progress >= 1.0) {
           this.cycleNext();
-          this.lastSwitchTime = time;
-          this.wristCrossTime = 0;
+          this.isLatched = true;
+          this.holdDuration = 0;
+          this.portalState.progress = 0;
+          this.portalState.isActive = false;
         }
       } else {
-        this.wristCrossTime = Math.max(0, this.wristCrossTime - dt * 2);
+        // Already switched on this hold — stay dormant until released
+        this.portalState.isActive = false;
+        this.portalState.progress = 0;
       }
     } else {
-      this.wristCrossTime = 0;
-    }
+      // Peace sign released
+      this.holdDuration = Math.max(0, this.holdDuration - dt * 3.0);
+      this.releaseDuration += dt;
 
-    // 2. Check Overhead Crown Portal Zone (y_norm < 0.18, x_norm in [0.15, 0.85])
-    let portalCandidatePos: { x: number; y: number } | null = null;
-    let candidateVelocity: THREE.Vector3 | undefined = undefined;
-
-    if (rightScreenPos && rightScreenPos.y < 0.18 && rightScreenPos.x >= 0.15 && rightScreenPos.x <= 0.85) {
-      portalCandidatePos = rightScreenPos;
-      candidateVelocity = rightVelocity;
-    } else if (leftScreenPos && leftScreenPos.y < 0.18 && leftScreenPos.x >= 0.15 && leftScreenPos.x <= 0.85) {
-      portalCandidatePos = leftScreenPos;
-      candidateVelocity = leftVelocity;
-    }
-
-    // 3. Horizontal Air-Swipe while in portal zone
-    if (portalCandidatePos && candidateVelocity && (time - this.lastSwipeTime) > 0.8) {
-      if (candidateVelocity.x > 0.58) {
-        this.cycleNext();
-        this.lastSwipeTime = time;
-        this.lastSwitchTime = time;
-      } else if (candidateVelocity.x < -0.58) {
-        this.cyclePrev();
-        this.lastSwipeTime = time;
-        this.lastSwitchTime = time;
-      }
-    }
-
-    // 4. Crown Portal Dwell Selection
-    if (portalCandidatePos) {
-      const normX = Math.max(0, Math.min(1, (portalCandidatePos.x - 0.15) / 0.70));
-      const targetIndex = Math.min(4, Math.floor(normX * 5));
-      const targetInst = ORDERED_INSTRUMENTS[targetIndex];
-
-      if (this.hoveredIndex === targetIndex) {
-        this.dwellTime += dt;
-      } else {
-        this.hoveredIndex = targetIndex;
-        this.dwellTime = 0;
+      if (this.releaseDuration >= this.RELEASE_THRESHOLD) {
+        this.isLatched = false; // Re-arm switcher for next gesture
       }
 
-      const progress = Math.min(1.0, this.dwellTime / this.targetDwellTime);
-
-      this.portalState.isActive = true;
-      this.portalState.targetInstrument = targetInst;
-      this.portalState.progress = progress;
-      this.portalState.screenX = portalCandidatePos.x;
-      this.portalState.screenY = portalCandidatePos.y;
-
-      if (progress >= 1.0 && (time - this.lastSwitchTime) > this.switchCooldown) {
-        this.setInstrument(targetInst);
-        this.lastSwitchTime = time;
-        this.dwellTime = 0;
-      }
-    } else {
-      this.hoveredIndex = null;
-      this.dwellTime = Math.max(0, this.dwellTime - dt * 3);
       this.portalState.isActive = false;
       this.portalState.targetInstrument = null;
       this.portalState.progress = 0;

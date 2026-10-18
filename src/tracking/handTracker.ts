@@ -21,7 +21,7 @@ import {
   computePalmScale,
 } from '../math/spatialProjection';
 import { HandKinematicObserver } from '../math/kinematicObserver';
-import { GestureNavigator } from './gestureNavigator';
+import { GestureNavigator, isPeaceSignGesture } from './gestureNavigator';
 import type { KinematicHandState, PortalHoverState, InstrumentId } from '../types/atelier';
 
 export type TrackingInputMode = 'camera-dual' | 'camera-single' | 'mouse';
@@ -348,16 +348,7 @@ export class HandTracker {
 
       this.gestureState.leftKinematics = this.leftKinematicObserver.update(nowSec, false, null);
       this.gestureState.rightKinematics = this.rightKinematicObserver.update(nowSec, false, null);
-      this.gestureState.portalState = this.navigator.update(
-        nowSec,
-        dt,
-        false,
-        false,
-        null,
-        null,
-        null,
-        null
-      );
+      this.gestureState.portalState = this.navigator.update(dt, null, null);
       this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
       return;
     }
@@ -419,6 +410,9 @@ export class HandTracker {
       pitchCandidate = detectedHands[1];
     }
 
+    let smoothedPitchLm: NormalizedLandmark[] | null = null;
+    let smoothedVolumeLm: NormalizedLandmark[] | null = null;
+
     // 1. Process Pitch Hand (Right)
     if (pitchCandidate) {
       this.lastPitchDetectedAt = nowMs;
@@ -426,6 +420,7 @@ export class HandTracker {
         pitchCandidate.mirroredLandmarks,
         nowSec
       );
+      smoothedPitchLm = smoothedLm;
       const landmarks3D = projectHandLandmarksTo3D(smoothedLm);
       const kin = computePitchKinematics(smoothedLm, landmarks3D, this.calibration);
 
@@ -470,6 +465,7 @@ export class HandTracker {
         volumeCandidate.mirroredLandmarks,
         nowSec
       );
+      smoothedVolumeLm = smoothedLm;
       const landmarks3D = projectHandLandmarksTo3D(smoothedLm);
       const kin = computeVolumeKinematics(smoothedLm, landmarks3D, this.calibration);
 
@@ -546,18 +542,11 @@ export class HandTracker {
       this.gestureState.inputMode = 'camera-single';
     }
 
-    // Update Zero-Click Gesture Navigation
+    // Update Zero-Click Gesture Navigation (Peace Sign ✌️)
     this.gestureState.portalState = this.navigator.update(
-      nowSec,
       dt,
-      this.gestureState.hasVolumeHand,
-      this.gestureState.hasPitchHand,
-      this.gestureState.volumeLandmarks3D,
-      this.gestureState.pitchLandmarks3D,
-      this.gestureState.volumeRawScreenPos,
-      this.gestureState.pitchRawScreenPos,
-      this.gestureState.rightKinematics.velocity,
-      this.gestureState.leftKinematics.velocity
+      smoothedVolumeLm,
+      smoothedPitchLm
     );
     this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
   }
@@ -655,14 +644,18 @@ export class HandTracker {
     }
 
     // 4. Role Label Badge
+    const isPeace = isPeaceSignGesture(landmarks);
+    const displayLabel = isPeace ? '✌ NEXT' : label;
+    const badgeColor = isPeace ? '#10b981' : jointColor;
+
     const wrist = landmarks[0];
     const badgeX = wrist.x * width;
     const badgeY = Math.min(height - 8, wrist.y * height + 14);
 
     ctx.font = '600 7.5px "JetBrains Mono", monospace';
-    ctx.fillStyle = jointColor;
+    ctx.fillStyle = badgeColor;
     ctx.textAlign = 'center';
-    ctx.fillText(label, badgeX, badgeY);
+    ctx.fillText(displayLabel, badgeX, badgeY);
 
     ctx.restore();
   }
@@ -721,18 +714,7 @@ export class HandTracker {
     this.lastPointerPos = { x: normX, y: normY };
 
     // Update navigator
-    this.gestureState.portalState = this.navigator.update(
-      nowSec,
-      dt,
-      true,
-      true,
-      null,
-      null,
-      { x: normX, y: normY },
-      { x: normX, y: normY },
-      new THREE.Vector3(pVx, pVy, 0),
-      new THREE.Vector3(pVx, pVy, 0)
-    );
+    this.gestureState.portalState = this.navigator.update(dt, null, null);
     this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
 
     // Synthesize kinematic states for multi-instrument mouse testing

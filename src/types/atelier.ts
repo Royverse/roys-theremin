@@ -1,5 +1,5 @@
 // ============================================================================
-// ROY'S ATELIER OF SPATIAL INSTRUMENTS (v3.0) — TYPES & INTERFACES
+// ROY'S ATELIER OF SPATIAL INSTRUMENTS (v3.1) — TYPES & INTERFACES
 // ============================================================================
 
 import * as THREE from 'three';
@@ -16,63 +16,75 @@ export interface InstrumentManifestItem {
   accentColorHex: number;
   leftHint: string;
   rightHint: string;
+  wikiUrl: string;
+  blurb: string;
 }
 
 export const INSTRUMENT_MANIFEST: Record<InstrumentId, InstrumentManifestItem> = {
   theremin: {
     id: 'theremin',
-    name: 'Moog Etherwave',
-    year: '1929 / 1996',
-    subtitle: 'Heterodyne Capacitive Field Synthesizer',
-    category: 'Electrophones · Class 5',
+    name: 'Theremin',
+    year: '1920',
+    subtitle: 'Capacitive Field',
+    category: 'Electrophone',
     accentColor: '#f59e0b',
     accentColorHex: 0xf59e0b,
-    leftHint: 'Left: Elevate for volume · Fist to staccato mute',
-    rightHint: 'Right: Proximity sets pitch · Finger pinch shapes vibrato',
+    leftHint: 'Raise for volume · Fist mutes',
+    rightHint: 'Move right for pitch · Pinch vibrato',
+    wikiUrl: 'https://en.wikipedia.org/wiki/Theremin',
+    blurb: 'Patented by Léon Theremin in 1928 and immortalized by virtuoso Clara Rockmore, two electromagnetic antennas sense your hands in mid-air without physical contact.',
   },
   cristal: {
     id: 'cristal',
     name: 'Cristal Baschet',
     year: '1952',
-    subtitle: 'Friction Glass Organ & Flame Resonator',
-    category: 'Friction Idiophones · 131.22',
+    subtitle: 'Crystal Organ',
+    category: 'Friction Idiophone',
     accentColor: '#38bdf8',
     accentColorHex: 0x38bdf8,
-    leftHint: 'Both Hands: Stroke or orbit in air across 12 glass rods',
-    rightHint: 'Tangential speed excites friction · Pinch brightens overtones',
+    leftHint: 'Glide across glass rods',
+    rightHint: 'Motion speed bows the crystal',
+    wikiUrl: 'https://en.wikipedia.org/wiki/Cristal_Baschet',
+    blurb: 'Sculpted in Paris by brothers Bernard and François Baschet, tuned glass rods stroked by the fingers transmit shimmering vibrations into a towering steel flame.',
   },
   handpan: {
     id: 'handpan',
     name: 'Swiss Handpan',
     year: '2000',
-    subtitle: 'Harmonic Nitrided Steel Vessel (D Kurd 9)',
-    category: 'Harmonic Idiophones · 111.24',
+    subtitle: 'D Kurd Vessel',
+    category: 'Struck Idiophone',
     accentColor: '#10b981',
     accentColorHex: 0x10b981,
-    leftHint: 'Both Hands: Mid-air downward flick strikes 9 tone dimples',
-    rightHint: 'Strike speed sets velocity · Palm roll bends harmonic swirl',
+    leftHint: 'Flick downward to strike',
+    rightHint: 'Tilt palm to swirl overtones',
+    wikiUrl: 'https://en.wikipedia.org/wiki/Handpan',
+    blurb: 'Born in Bern, Switzerland from the steelpan and Indian ghatam, its nitrided steel dome unites fundamental, octave, and fifth harmonics in every dimple.',
   },
   martenot: {
     id: 'martenot',
     name: 'Ondes Martenot',
     year: '1928',
-    subtitle: 'Ribbon Wire & Palme Sympathetic Resonator',
-    category: 'Electro-Acoustic · Class 5',
+    subtitle: 'Ribbon & Palme',
+    category: 'Electro-Acoustic',
     accentColor: '#ec4899',
     accentColorHex: 0xec4899,
-    leftHint: 'Left: Touche d’intensité pressure & palm aperture resonance',
-    rightHint: 'Right: Slide index ring along wire · Micro-shake vibrato',
+    leftHint: 'Elevate for expression & harp',
+    rightHint: 'Slide ring along wire for pitch',
+    wikiUrl: 'https://en.wikipedia.org/wiki/Ondes_Martenot',
+    blurb: 'Created by French cellist Maurice Martenot and beloved by Olivier Messiaen and Radiohead, a finger ring glides along a wire while a 12-string harp resonates sympathetically.',
   },
   laserharp: {
     id: 'laserharp',
-    name: 'Spatial Laser Harp',
-    year: '1981 / 2026',
-    subtitle: 'Zero-Mass Optical & Plucked Cymatic Harp',
-    category: 'Optical Chordophone · 530 / 312.22',
+    name: 'Laser Harp',
+    year: '1981 · Future',
+    subtitle: 'Optical Strings',
+    category: 'Photonic Synth',
     accentColor: '#8b5cf6',
     accentColorHex: 0x8b5cf6,
-    leftHint: 'Both Hands: Break or sweep across 10 volumetric light beams',
-    rightHint: 'Crossing speed plucks string · Vertical height filters tone',
+    leftHint: 'Sweep through light beams',
+    rightHint: 'Height filters tone · Pinch bends',
+    wikiUrl: 'https://en.wikipedia.org/wiki/Laser_harp',
+    blurb: 'Pioneered by Bernard Szajner and Jean-Michel Jarre, weightless shafts of coherent light replace physical strings—turning pure mid-air shadow into polyphonic sound.',
   },
 };
 

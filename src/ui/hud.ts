@@ -1,6 +1,6 @@
 // ============================================================================
-// ROY'S ATELIER OF SPATIAL INSTRUMENTS — NEUMORPHIC CONSOLE & HUD (v3)
-// 5-Instrument Stage Carousel with Zero-Click Overhead Portal & Wrist-Cross Navigation
+// ROY'S ATELIER OF SPATIAL INSTRUMENTS — MINIMALIST GLASS HUD & STORIES (v3.1)
+// 5-Instrument Stage Bar, Latched Peace-Sign (✌️) Progress Ring & Story Encyclopedia
 // ============================================================================
 
 import type { HandTracker, HandGestureResult } from '../tracking/handTracker';
@@ -37,7 +37,12 @@ export class ThereminHUD {
   private cameraDockEl!: HTMLElement;
   private cameraLabelEl!: HTMLElement;
   private stagePills: Record<InstrumentId, HTMLButtonElement> = {} as any;
-  private portalDwellBar!: HTMLElement;
+  private storyCards: HTMLElement[] = [];
+
+  // Peace Sign Indicator Elements
+  private peaceIndicatorEl!: HTMLElement;
+  private peaceRingFillEl!: SVGCircleElement;
+  private peaceLabelEl!: HTMLElement;
 
   private waveBuffer = new Uint8Array(256);
   private lastTunedState = false;
@@ -59,8 +64,10 @@ export class ThereminHUD {
   }
 
   private buildDOM(): void {
+    const instruments = Object.values(INSTRUMENT_MANIFEST);
+
     this.container.innerHTML = `
-      <!-- Top Navigation & Neumorphic 5-Instrument Stage Bar -->
+      <!-- Top Navigation & Stage Header -->
       <header class="hud-header">
         <div class="brand-group">
           <div class="pilot-lamp">
@@ -68,16 +75,11 @@ export class ThereminHUD {
           </div>
           <div class="brand-titles">
             <h1 class="brand-name">Roy’s Atelier</h1>
-            <span class="brand-tag">Spatial Instruments · v3</span>
           </div>
         </div>
 
-        <!-- 5-Instrument Stage Carousel Navigation -->
+        <!-- 5-Instrument Stage Carousel & Latched Peace-Sign Indicator -->
         <div class="stage-nav-cluster">
-          <div class="portal-guidance-pill" title="Raise either hand above this bar or cross wrists to switch">
-            <span class="portal-spark">✦</span>
-            <span class="portal-text">Zero-Click Stage: Hover at top or cross wrists to switch</span>
-          </div>
           <div class="stage-segmented-control" role="tablist" aria-label="Instruments Stage">
             <button class="stage-btn active" data-inst="theremin" id="pill-theremin">
               <span class="stage-dot" style="background: #f59e0b"></span>
@@ -99,45 +101,52 @@ export class ThereminHUD {
               <span class="stage-dot" style="background: #8b5cf6"></span>
               <span class="stage-label">Laser Harp</span>
             </button>
-            <div id="portal-dwell-bar" class="portal-dwell-bar"></div>
+          </div>
+
+          <!-- Subtle Peace-Sign ✌️ Gesture Progress Indicator -->
+          <div class="peace-switch-indicator" id="peace-indicator" title="Hold a peace sign ✌️ with either hand to switch to the next instrument">
+            <div class="peace-ring-wrap">
+              <svg class="peace-ring-svg" viewBox="0 0 28 28">
+                <circle class="peace-ring-bg" cx="14" cy="14" r="11" />
+                <circle id="peace-ring-fill" class="peace-ring-fill" cx="14" cy="14" r="11" />
+              </svg>
+              <span class="peace-icon">✌️</span>
+            </div>
+            <span class="peace-label" id="peace-label">Hold ✌️ to switch</span>
           </div>
         </div>
 
         <!-- System Controls -->
         <div class="control-cluster">
-          <!-- Audio Toggle Button -->
           <button id="btn-audio" class="neumorphic-btn btn-audio" aria-label="Toggle Audio">
             <span class="btn-dot"></span>
             <span class="btn-text">Audio</span>
           </button>
 
-          <!-- Vision Tracking Button -->
           <button id="btn-camera" class="neumorphic-btn btn-camera" aria-label="Toggle Vision">
             <span class="btn-dot"></span>
             <span class="btn-text">Vision</span>
           </button>
 
-          <!-- Spatial Calibrate Button -->
           <button id="btn-calibrate" class="neumorphic-btn btn-calibrate" title="Calibrate reach" aria-label="Calibrate">
             <span class="btn-text">Calibrate</span>
           </button>
 
-          <!-- Technique Guide Button -->
-          <button id="btn-guide" class="neumorphic-btn btn-circle" title="Organology Guide" aria-label="Guide">
-            <span class="info-mark">?</span>
+          <button id="btn-guide" class="neumorphic-btn btn-stories" title="Instrument Stories & Encyclopedia" aria-label="Instrument Stories">
+            <span class="btn-text">Stories</span>
           </button>
         </div>
       </header>
 
-      <!-- Center Floating Sculptural Console -->
+      <!-- Center Floating Sculptural Console (Whisper-Light Glass) -->
       <main class="console-viewport">
         <div class="sculptural-console">
-          <!-- Top Row: Precision Pitch & Dynamics -->
+          <!-- Top Row: Dynamics + Prime Note + Waveform Scope -->
           <div class="console-top-row">
             <!-- Left: Dynamics -->
             <div class="dynamics-module">
               <div class="module-header">
-                <span class="module-label">Kinetic Amplitude</span>
+                <span class="module-label">Level</span>
                 <span id="mute-indicator" class="mute-indicator">Muted</span>
               </div>
               <div class="groove-meter">
@@ -145,7 +154,7 @@ export class ThereminHUD {
               </div>
               <div class="module-footer">
                 <span id="vu-val" class="sub-metric">0%</span>
-                <span id="tracking-badge" class="sub-legend">Pointer Field</span>
+                <span id="tracking-badge" class="sub-legend">Pointer</span>
               </div>
             </div>
 
@@ -159,28 +168,23 @@ export class ThereminHUD {
                 <span class="freq-unit">Hz</span>
               </div>
               <div class="inst-subtitle-badge">
-                <span id="inst-title" class="inst-title">Moog Etherwave</span>
-                <span id="inst-year" class="inst-year">1929 / 1996</span>
+                <span id="inst-title" class="inst-title">Theremin</span>
+                <span id="inst-year" class="inst-year">1929</span>
               </div>
             </div>
 
             <!-- Right: Cathode Waveform Scope -->
             <div class="scope-module">
               <div class="module-header">
-                <span class="module-label">Acoustic Core</span>
-                <span id="voice-legend" class="sub-legend">Heterodyne Dual Osc</span>
+                <span id="voice-legend" class="module-label">Spatial Core</span>
               </div>
               <div class="scope-aperture">
-                <canvas id="osc-canvas" class="osc-canvas" width="160" height="38"></canvas>
-              </div>
-              <div class="module-footer">
-                <span class="sub-metric">Stereo Convolver</span>
-                <span class="sub-legend">Concert Hall</span>
+                <canvas id="osc-canvas" class="osc-canvas" width="140" height="34"></canvas>
               </div>
             </div>
           </div>
 
-          <!-- Bottom Row: Swiss Dial Cent Deviation Ruler -->
+          <!-- Bottom Row: Cent Deviation Needle -->
           <div class="cents-dial-row">
             <div class="cents-dial-container">
               <div class="cents-ruler">
@@ -206,50 +210,52 @@ export class ThereminHUD {
       <!-- Spatial Guidance Hints -->
       <aside id="hint-left" class="spatial-hint hint-left">
         <span class="hint-key">Left Hand</span>
-        <span class="hint-action" id="hint-left-action">Left: Elevate for volume · Fist to staccato mute</span>
+        <span class="hint-action" id="hint-left-action">Elevate for volume</span>
       </aside>
 
       <aside id="hint-right" class="spatial-hint hint-right">
         <span class="hint-key">Right Hand</span>
-        <span class="hint-action" id="hint-right-action">Right: Proximity sets pitch · Finger pinch shapes vibrato</span>
+        <span class="hint-action" id="hint-right-action">Proximity sets pitch</span>
       </aside>
 
-      <!-- Organology & Technique Modal -->
+      <!-- The Five Instruments — Blurred-Backdrop Story Dialog -->
       <div id="guide-modal" class="modal-backdrop hidden">
         <div class="modal-card">
           <div class="modal-header">
             <div class="modal-title-group">
-              <h2 class="modal-title">Roy’s Atelier of Spatial Instruments</h2>
-              <span class="modal-subtitle">Organology, 1€ Kinematics & Zero-Click Navigation</span>
+              <h2 class="modal-title">The Five Instruments</h2>
+              <span class="modal-subtitle">✌️ Hold a peace sign in mid-air to cycle instruments hands-free</span>
             </div>
             <button id="btn-close-guide" class="modal-close-btn" aria-label="Close">✕</button>
           </div>
           <div class="modal-content">
-            <div class="guide-grid">
-              <div class="guide-pillar">
-                <div class="pillar-num">01</div>
-                <h3 class="pillar-title">Zero-Click Stage Navigation</h3>
-                <p>Raise either hand into the <strong>top Crown Portal</strong> above the stage pills to fill the golden dwell ring (0.75s) and switch instruments hands-free. Or cross both wrists in front of the camera for 0.6s to quick-cycle to the next instrument.</p>
-              </div>
-
-              <div class="guide-pillar">
-                <div class="pillar-num">02</div>
-                <h3 class="pillar-title">5 Rare World Instruments</h3>
-                <p><strong>Theremin (1929):</strong> Capacitive proximity pitch & volume.<br/>
-                   <strong>Cristal Baschet (1952):</strong> Tangential rubbing velocity excites 12 glass rods.<br/>
-                   <strong>Swiss Handpan (2000):</strong> Mid-air downward acceleration strike on 9 tone fields.<br/>
-                   <strong>Ondes Martenot (1928):</strong> Sliding ribbon ring pitch + Touche expression drawer.<br/>
-                   <strong>Laser Harp (1981):</strong> Break and pluck 10 volumetric light beams in mid-air.</p>
-              </div>
-
-              <div class="guide-pillar">
-                <div class="pillar-num">03</div>
-                <h3 class="pillar-title">Zero Physical Resistance (Air Physics)</h3>
-                <p>Unlike virtual pianos, every instrument in Roy’s Atelier was specifically selected because continuous spatial movement, friction, and acceleration define its authentic acoustic physics.</p>
-              </div>
+            <div class="inst-story-grid">
+              ${instruments
+                .map(
+                  (item) => `
+                <div class="inst-story-card ${item.id === 'theremin' ? 'active' : ''}" data-inst="${item.id}">
+                  <div class="story-card-top">
+                    <div class="story-identity">
+                      <span class="story-dot" style="background: ${item.accentColor}"></span>
+                      <span class="story-name">${item.name}</span>
+                      <span class="story-year">${item.year}</span>
+                    </div>
+                    <span class="story-cat">${item.category}</span>
+                  </div>
+                  <p class="story-blurb">${item.blurb}</p>
+                  <div class="story-footer">
+                    <span class="story-hint">${item.leftHint} · ${item.rightHint}</span>
+                    <a href="${item.wikiUrl}" target="_blank" rel="noopener noreferrer" class="wiki-link" onclick="event.stopPropagation()">
+                      Wikipedia ↗
+                    </a>
+                  </div>
+                </div>
+              `
+                )
+                .join('')}
             </div>
             <footer class="modal-footer">
-              <span class="fallback-note">Desktop: Move mouse to play · Scroll wheel for vibrato · Click/Space to mute or strike Handpan. Click stage pills to switch directly.</span>
+              <span class="fallback-note">Select any instrument above or use ✌️ in front of the camera. Continuous spatial movement, friction, and acceleration shape each physical synthesis model.</span>
             </footer>
           </div>
         </div>
@@ -277,7 +283,10 @@ export class ThereminHUD {
     this.cameraBtn = this.container.querySelector('#btn-camera') as HTMLButtonElement;
     this.calibrateBtn = this.container.querySelector('#btn-calibrate') as HTMLButtonElement;
     this.guideModal = this.container.querySelector('#guide-modal')!;
-    this.portalDwellBar = this.container.querySelector('#portal-dwell-bar')!;
+
+    this.peaceIndicatorEl = this.container.querySelector('#peace-indicator')!;
+    this.peaceRingFillEl = this.container.querySelector('#peace-ring-fill') as unknown as SVGCircleElement;
+    this.peaceLabelEl = this.container.querySelector('#peace-label')!;
 
     this.cameraDockEl = document.getElementById('camera-dock')!;
     this.cameraLabelEl = document.getElementById('camera-label')!;
@@ -286,6 +295,8 @@ export class ThereminHUD {
     for (const id of ids) {
       this.stagePills[id] = this.container.querySelector(`#pill-${id}`) as HTMLButtonElement;
     }
+
+    this.storyCards = Array.from(this.container.querySelectorAll('.inst-story-card'));
   }
 
   private setupListeners(): void {
@@ -301,6 +312,20 @@ export class ThereminHUD {
           }
         });
       }
+    }
+
+    // Story Cards Click (Direct Instrument Selection from Encyclopedia)
+    for (const card of this.storyCards) {
+      card.addEventListener('click', () => {
+        const id = card.getAttribute('data-inst') as InstrumentId;
+        if (id) {
+          this.setActiveInstrument(id);
+          if (this.onSelectInstrument) {
+            this.onSelectInstrument(id);
+          }
+          this.guideModal.classList.add('hidden');
+        }
+      });
     }
 
     // Audio toggle
@@ -325,7 +350,7 @@ export class ThereminHUD {
         }
         this.cameraBtn.classList.add('active');
         this.cameraDockEl.classList.add('active');
-        if (this.cameraLabelEl) this.cameraLabelEl.textContent = '1€ Kinematics Active';
+        if (this.cameraLabelEl) this.cameraLabelEl.textContent = 'Vision Active';
       } else {
         this.cameraBtn.classList.remove('active');
         this.cameraDockEl.classList.remove('active');
@@ -377,6 +402,15 @@ export class ThereminHUD {
     for (const [btnId, btn] of Object.entries(this.stagePills)) {
       if (btnId === id) btn.classList.add('active');
       else btn.classList.remove('active');
+    }
+
+    // Update active story card
+    for (const card of this.storyCards) {
+      if (card.getAttribute('data-inst') === id) {
+        card.classList.add('active');
+      } else {
+        card.classList.remove('active');
+      }
     }
 
     const manifest = INSTRUMENT_MANIFEST[id];
@@ -439,14 +473,14 @@ export class ThereminHUD {
 
     if (this.tracker.getIsCameraActive()) {
       if (gestures.inputMode === 'camera-single') {
-        this.trackingBadgeEl.textContent = '1-Hand Assist';
+        this.trackingBadgeEl.textContent = '1-Hand';
       } else if (gestures.hasPitchHand && gestures.hasVolumeHand) {
-        this.trackingBadgeEl.textContent = 'Dual-Hand 3D';
+        this.trackingBadgeEl.textContent = 'Dual-Hand';
       } else {
-        this.trackingBadgeEl.textContent = 'Vision Ready';
+        this.trackingBadgeEl.textContent = 'Vision';
       }
     } else {
-      this.trackingBadgeEl.textContent = 'Pointer Field';
+      this.trackingBadgeEl.textContent = 'Pointer';
     }
 
     const isMuted = gestures.isFistMuted || currentGain < 0.015;
@@ -456,21 +490,23 @@ export class ThereminHUD {
       this.muteIndicatorEl.classList.remove('active');
     }
 
-    // 3. Overhead Crown Portal Dwell Progress Visualizer
+    // 3. Peace-Sign ✌️ Progress Ring Animation
     const portal = gestures.portalState;
-    if (portal && portal.isActive && portal.targetInstrument) {
-      const targetPill = this.stagePills[portal.targetInstrument];
-      if (targetPill) {
-        const rect = targetPill.getBoundingClientRect();
-        const parentRect = this.portalDwellBar.parentElement?.getBoundingClientRect() || { left: 0 };
-        const leftOffset = rect.left - parentRect.left;
-        this.portalDwellBar.style.left = `${leftOffset}px`;
-        this.portalDwellBar.style.width = `${rect.width * portal.progress}px`;
-        this.portalDwellBar.style.opacity = '1';
+    const CIRCUMFERENCE = 69.115; // 2 * Math.PI * 11
+
+    if (portal && portal.isActive && portal.progress > 0) {
+      this.peaceIndicatorEl.classList.add('active');
+      const offset = CIRCUMFERENCE * (1 - Math.min(1.0, Math.max(0, portal.progress)));
+      this.peaceRingFillEl.style.strokeDashoffset = `${offset}`;
+
+      if (portal.targetInstrument) {
+        const nextManifest = INSTRUMENT_MANIFEST[portal.targetInstrument];
+        this.peaceLabelEl.textContent = `Next: ${nextManifest.name}`;
       }
     } else {
-      this.portalDwellBar.style.opacity = '0';
-      this.portalDwellBar.style.width = '0px';
+      this.peaceIndicatorEl.classList.remove('active');
+      this.peaceRingFillEl.style.strokeDashoffset = `${CIRCUMFERENCE}`;
+      this.peaceLabelEl.textContent = 'Hold ✌️ to switch';
     }
 
     // 4. Oscilloscope
@@ -497,7 +533,7 @@ export class ThereminHUD {
     ctx.clearRect(0, 0, w, h);
 
     // Subtle horizontal baseline
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, h / 2);
@@ -505,7 +541,7 @@ export class ThereminHUD {
     ctx.stroke();
 
     if (gain < 0.005) {
-      ctx.strokeStyle = 'rgba(245, 158, 11, 0.25)';
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.2)';
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(0, h / 2);
