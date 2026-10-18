@@ -1,7 +1,7 @@
 {
   "name": "roys-theremin",
-  "version": "2.0.0",
-  "description": "Roy's Theremin — 3D WebGL & MediaPipe Acoustic Field Synthesizer with 1€ Adaptive Hand Tracking and Heterodyne Formant Synthesis",
+  "version": "3.0.0",
+  "description": "Roy's Atelier of Spatial Instruments (v3.0) — 3D WebGL & MediaPipe Hand Kinematics, Acceleration & Zero-Click Navigation for 5 Rare World Instruments (Theremin, Cristal Baschet, Swiss Handpan, Ondes Martenot, Spatial Laser Harp)",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -11,10 +11,15 @@
   "homepage": "https://roys-theremin.netlify.app",
   "keywords": [
     "theremin",
+    "cristal-baschet",
+    "handpan",
+    "ondes-martenot",
+    "laser-harp",
     "threejs",
     "webgl",
     "mediapipe",
     "hand-tracking",
+    "kinematics",
     "web-audio-api",
     "one-euro-filter",
     "synthesizer"

@@ -1,7 +1,7 @@
 // ============================================================================
-// MEDIAPIPE HAND TRACKER, 1€ FILTERING & KINEMATIC GESTURE PIPELINE (v2)
-// Tracks 21 3D landmarks with velocity-adaptive 1€ smoothing, palm-normalized
-// scale invariance, and monotonic 1:1 3D world projection.
+// MEDIAPIPE HAND TRACKER, 1€ FILTERING & KINEMATIC GESTURE PIPELINE (v3)
+// Real-time 21-landmark tracking with second-order velocity/acceleration kinematics,
+// palm normal vectors, and zero-click gesture navigation for all 5 instruments.
 // ============================================================================
 
 import * as THREE from 'three';
@@ -18,7 +18,11 @@ import {
   projectHandLandmarksTo3D,
   computePitchKinematics,
   computeVolumeKinematics,
+  computePalmScale,
 } from '../math/spatialProjection';
+import { HandKinematicObserver } from '../math/kinematicObserver';
+import { GestureNavigator } from './gestureNavigator';
+import type { KinematicHandState, PortalHoverState, InstrumentId } from '../types/atelier';
 
 export type TrackingInputMode = 'camera-dual' | 'camera-single' | 'mouse';
 
@@ -42,6 +46,14 @@ export interface HandGestureResult {
   volumeLoopPoint: THREE.Vector3 | null;   // Corresponding 3D point on horizontal loop
   volumeLandmarks3D: THREE.Vector3[] | null;
   volumeRawScreenPos: { x: number; y: number } | null;
+
+  // Multi-Instrument Kinematics (v3)
+  leftKinematics: KinematicHandState;
+  rightKinematics: KinematicHandState;
+
+  // Zero-Click Overhead Portal & Wrist-Cross Navigation State (v3)
+  portalState: PortalHoverState;
+  activeInstrument: InstrumentId;
 }
 
 const HAND_CONNECTIONS: ReadonlyArray<[number, number]> = [
@@ -76,6 +88,13 @@ export class HandTracker {
   private pitchSpanFilter = new OneEuroFilter(1.8, 0.05);
   private volumeHeightFilter = new OneEuroFilter(1.6, 0.05);
 
+  // Second-Order Kinematic Observers (v3)
+  private leftKinematicObserver = new HandKinematicObserver();
+  private rightKinematicObserver = new HandKinematicObserver();
+
+  // Zero-Click Gesture Navigator (v3)
+  public navigator = new GestureNavigator('theremin');
+
   // Dropout grace timestamps (ms)
   private lastPitchDetectedAt = 0;
   private lastVolumeDetectedAt = 0;
@@ -86,6 +105,8 @@ export class HandTracker {
   private isMouseDown = false;
   private isSpaceMuted = false;
   private mouseVibratoWheel = 0;
+  private lastPointerPos = { x: 0.5, y: 0.5 };
+  private lastPointerTime = 0;
 
   // Current gesture state
   private gestureState: HandGestureResult = {
@@ -105,6 +126,11 @@ export class HandTracker {
     volumeLoopPoint: null,
     volumeLandmarks3D: null,
     volumeRawScreenPos: null,
+
+    leftKinematics: this.leftKinematicObserver.getState(),
+    rightKinematics: this.rightKinematicObserver.getState(),
+    portalState: this.navigator.getPortalState(),
+    activeInstrument: 'theremin',
   };
 
   constructor(video: HTMLVideoElement, overlayCanvas: HTMLCanvasElement) {
@@ -136,13 +162,14 @@ export class HandTracker {
       this.mediaPipeHands.setOptions({
         maxNumHands: 2,
         modelComplexity: 1,
-        minDetectionConfidence: 0.62,
-        minTrackingConfidence: 0.58,
+        minDetectionConfidence: 0.55,
+        minTrackingConfidence: 0.55,
       });
 
-      this.mediaPipeHands.onResults((results: MediaPipeHandsResults) =>
-        this.onMediaPipeResults(results)
-      );
+      this.mediaPipeHands.onResults((results: MediaPipeHandsResults) => {
+        this.onMediaPipeResults(results);
+      });
+
       this.isMediaPipeReady = true;
       return true;
     } catch (err) {
@@ -151,40 +178,41 @@ export class HandTracker {
     }
   }
 
-  private async loadMediaPipeScripts(): Promise<void> {
-    const loadScript = (src: string) =>
-      new Promise<void>((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = src;
-        script.crossOrigin = 'anonymous';
-        script.onload = () => resolve();
-        script.onerror = (e) => reject(e);
-        document.head.appendChild(script);
-      });
+  private loadMediaPipeScripts(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (window.Hands) {
+        resolve();
+        return;
+      }
 
-    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js');
-    await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js');
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js';
+      script.crossOrigin = 'anonymous';
+      script.onload = () => resolve();
+      script.onerror = (e) => reject(new Error(`Failed to load MediaPipe: ${e}`));
+      document.head.appendChild(script);
+    });
   }
 
   public async startCamera(): Promise<boolean> {
     try {
       if (!this.isMediaPipeReady) {
-        const ok = await this.initMediaPipe();
-        if (!ok) return false;
+        const ready = await this.initMediaPipe();
+        if (!ready) return false;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const constraints: MediaStreamConstraints = {
         video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
           facingMode: 'user',
-          frameRate: { ideal: 60 },
+          frameRate: { ideal: 60, min: 30 },
         },
         audio: false,
-      });
+      };
 
-      this.cameraStream = stream;
-      this.videoElement.srcObject = stream;
+      this.cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.videoElement.srcObject = this.cameraStream;
       await this.videoElement.play();
 
       this.isCameraActive = true;
@@ -194,6 +222,8 @@ export class HandTracker {
       this.pitchPosFilter.reset();
       this.pitchSpanFilter.reset();
       this.volumeHeightFilter.reset();
+      this.leftKinematicObserver.reset();
+      this.rightKinematicObserver.reset();
 
       this.scheduleNextVideoFrame();
       return true;
@@ -256,10 +286,6 @@ export class HandTracker {
   // --------------------------------------------------------------------------
   // ERGONOMIC CALIBRATION
   // --------------------------------------------------------------------------
-  /**
-   * Calibrates the pitch & volume spatial zones based on current hand positions
-   * or resets to ergonomic defaults if hands are not currently raised.
-   */
   public calibrateSpace(): { calibrated: boolean; message: string } {
     if (
       this.isCameraActive &&
@@ -267,7 +293,6 @@ export class HandTracker {
       this.gestureState.pitchRawScreenPos
     ) {
       const currentX = this.gestureState.pitchRawScreenPos.x;
-      // Set antenna slightly to the right of current comfortable reach
       const newAntennaX = Math.max(0.64, Math.min(0.88, currentX + 0.14));
       const newMinX = Math.max(0.32, newAntennaX - 0.34);
       this.calibration.pitchAntennaX = newAntennaX;
@@ -299,68 +324,99 @@ export class HandTracker {
     const width = this.canvasElement.width;
     const height = this.canvasElement.height;
     const ctx = this.canvasCtx;
-    const nowMs = performance.now();
-    const nowSec = nowMs * 0.001;
 
     if (ctx) {
       ctx.clearRect(0, 0, width, height);
       this.drawAntennaGuides(ctx, width, height);
     }
 
-    const rawHands = results.multiHandLandmarks ?? [];
-    const handednessList = results.multiHandedness ?? [];
+    const nowMs = performance.now();
+    const nowSec = nowMs * 0.001;
+    const dt = 0.016; // nominal frame step for UI navigator
 
-    interface CandidateHand {
-      mirroredLandmarks: NormalizedLandmark[];
-      palmCenterX: number;
-      rawLabel: 'Left' | 'Right' | undefined;
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+      if (nowMs - this.lastPitchDetectedAt > DROPOUT_GRACE_MS) {
+        this.gestureState.hasPitchHand = false;
+        this.gestureState.pitchLandmarks3D = null;
+        this.pitchHandFilter.reset();
+      }
+      if (nowMs - this.lastVolumeDetectedAt > DROPOUT_GRACE_MS) {
+        this.gestureState.hasVolumeHand = false;
+        this.gestureState.volumeLandmarks3D = null;
+        this.volumeHandFilter.reset();
+      }
+
+      this.gestureState.leftKinematics = this.leftKinematicObserver.update(nowSec, false, null);
+      this.gestureState.rightKinematics = this.rightKinematicObserver.update(nowSec, false, null);
+      this.gestureState.portalState = this.navigator.update(
+        nowSec,
+        dt,
+        false,
+        false,
+        null,
+        null,
+        null,
+        null
+      );
+      this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
+      return;
     }
 
-    const candidates: CandidateHand[] = rawHands.map((rawLm, idx) => {
-      // Mirror X coordinate so screen Left (0.0) = user's physical Left,
-      // and screen Right (1.0) = user's physical Right.
-      const mirroredLandmarks = rawLm.map((lm) => ({
+    // Process detected hands
+    const detectedHands: Array<{
+      mirroredLandmarks: NormalizedLandmark[];
+      rawScreenX: number;
+      rawScreenY: number;
+      label: 'Left' | 'Right';
+    }> = [];
+
+    for (let h = 0; h < results.multiHandLandmarks.length; h++) {
+      const rawLm = results.multiHandLandmarks[h];
+      const handedness = results.multiHandedness?.[h]?.label ?? (h === 0 ? 'Right' : 'Left');
+
+      const mirroredLandmarks: NormalizedLandmark[] = rawLm.map((lm) => ({
         x: 1.0 - lm.x,
         y: lm.y,
         z: lm.z,
       }));
-      const wrist = mirroredLandmarks[0];
-      const middleMcp = mirroredLandmarks[9];
-      const palmCenterX = (wrist.x + middleMcp.x) * 0.5;
-      const rawLabel = handednessList[idx]?.label;
 
-      return { mirroredLandmarks, palmCenterX, rawLabel };
-    });
+      const palmX = (mirroredLandmarks[0].x + mirroredLandmarks[9].x) * 0.5;
+      const palmY = (mirroredLandmarks[0].y + mirroredLandmarks[9].y) * 0.5;
 
-    let pitchCandidate: CandidateHand | null = null;
-    let volumeCandidate: CandidateHand | null = null;
+      const physicalRole: 'Left' | 'Right' = handedness === 'Left' ? 'Right' : 'Left';
 
-    if (candidates.length >= 2) {
-      // Sort by mirrored horizontal position: Left-most = Volume, Right-most = Pitch
-      candidates.sort((a, b) => a.palmCenterX - b.palmCenterX);
-      volumeCandidate = candidates[0];
-      pitchCandidate = candidates[candidates.length - 1];
-    } else if (candidates.length === 1) {
-      const c = candidates[0];
-      // Hysteresis + anatomical check in the central overlap zone [0.35, 0.46]
-      // Note: In un-mirrored input image, MediaPipe 'Left' label corresponds to the user's physical Right hand.
-      if (c.palmCenterX >= 0.45) {
-        pitchCandidate = c;
+      detectedHands.push({
+        mirroredLandmarks,
+        rawScreenX: palmX,
+        rawScreenY: palmY,
+        label: physicalRole,
+      });
+    }
+
+    // Assign roles with spatial hysteresis
+    let pitchCandidate: (typeof detectedHands)[0] | null = null;
+    let volumeCandidate: (typeof detectedHands)[0] | null = null;
+
+    if (detectedHands.length === 1) {
+      const single = detectedHands[0];
+      const isClearlyPitch = single.rawScreenX > 0.44;
+      const isClearlyVolume = single.rawScreenX < 0.36;
+
+      if (isClearlyPitch) {
         this.lastSingleHandRole = 'pitch';
-      } else if (c.palmCenterX <= 0.34) {
-        volumeCandidate = c;
+      } else if (isClearlyVolume) {
         this.lastSingleHandRole = 'volume';
-      } else if (c.rawLabel === 'Left') {
-        pitchCandidate = c;
-        this.lastSingleHandRole = 'pitch';
-      } else if (c.rawLabel === 'Right') {
-        volumeCandidate = c;
-        this.lastSingleHandRole = 'volume';
-      } else if (this.lastSingleHandRole === 'pitch') {
-        pitchCandidate = c;
-      } else {
-        volumeCandidate = c;
       }
+
+      if (this.lastSingleHandRole === 'pitch') {
+        pitchCandidate = single;
+      } else {
+        volumeCandidate = single;
+      }
+    } else {
+      detectedHands.sort((a, b) => a.rawScreenX - b.rawScreenX);
+      volumeCandidate = detectedHands[0];
+      pitchCandidate = detectedHands[1];
     }
 
     // 1. Process Pitch Hand (Right)
@@ -381,13 +437,30 @@ export class HandTracker {
       this.gestureState.pitchLandmarks3D = landmarks3D;
       this.gestureState.pitchRawScreenPos = kin.rawScreenPos;
 
+      this.gestureState.rightKinematics = this.rightKinematicObserver.update(
+        nowSec,
+        true,
+        landmarks3D,
+        computePalmScale(smoothedLm)
+      );
+
       if (ctx) {
-        this.drawHandSkeleton(ctx, smoothedLm, width, height, '#e2e8f0', '#38bdf8', 'PITCH', true);
+        this.drawHandSkeleton(
+          ctx,
+          smoothedLm,
+          width,
+          height,
+          '#dbeafe',
+          '#38bdf8',
+          'PITCH',
+          true
+        );
       }
     } else if (nowMs - this.lastPitchDetectedAt > DROPOUT_GRACE_MS) {
       this.gestureState.hasPitchHand = false;
       this.gestureState.pitchLandmarks3D = null;
       this.pitchHandFilter.reset();
+      this.gestureState.rightKinematics = this.rightKinematicObserver.update(nowSec, false, null);
     }
 
     // 2. Process Volume Hand (Left)
@@ -408,6 +481,13 @@ export class HandTracker {
       this.gestureState.volumeLandmarks3D = landmarks3D;
       this.gestureState.volumeRawScreenPos = kin.rawScreenPos;
 
+      this.gestureState.leftKinematics = this.leftKinematicObserver.update(
+        nowSec,
+        true,
+        landmarks3D,
+        computePalmScale(smoothedLm)
+      );
+
       if (ctx) {
         this.drawHandSkeleton(
           ctx,
@@ -421,10 +501,7 @@ export class HandTracker {
         );
       }
     } else if (nowMs - this.lastVolumeDetectedAt > DROPOUT_GRACE_MS) {
-      // Single-Hand Expressive Assist:
-      // If the user only raises their Right (Pitch) Hand, automatically derive a natural
-      // expressive volume from the right hand's vertical elevation & openness so one-handed
-      // playing works out of the box without silence!
+      // Single-Hand Expressive Assist
       if (this.gestureState.hasPitchHand && pitchCandidate) {
         const smoothedPitchLm = this.pitchHandFilter.filterLandmarks(
           pitchCandidate.mirroredLandmarks,
@@ -452,11 +529,13 @@ export class HandTracker {
           0
         );
         this.gestureState.volumeLandmarks3D = null;
+        this.gestureState.leftKinematics = this.leftKinematicObserver.update(nowSec, false, null);
       } else {
         this.gestureState.hasVolumeHand = false;
         this.gestureState.volumeHeight = 0.0;
         this.gestureState.volumeLandmarks3D = null;
         this.volumeHandFilter.reset();
+        this.gestureState.leftKinematics = this.leftKinematicObserver.update(nowSec, false, null);
       }
     }
 
@@ -466,6 +545,21 @@ export class HandTracker {
     } else {
       this.gestureState.inputMode = 'camera-single';
     }
+
+    // Update Zero-Click Gesture Navigation
+    this.gestureState.portalState = this.navigator.update(
+      nowSec,
+      dt,
+      this.gestureState.hasVolumeHand,
+      this.gestureState.hasPitchHand,
+      this.gestureState.volumeLandmarks3D,
+      this.gestureState.pitchLandmarks3D,
+      this.gestureState.volumeRawScreenPos,
+      this.gestureState.pitchRawScreenPos,
+      this.gestureState.rightKinematics.velocity,
+      this.gestureState.leftKinematics.velocity
+    );
+    this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
   }
 
   // --------------------------------------------------------------------------
@@ -478,22 +572,27 @@ export class HandTracker {
   ): void {
     ctx.save();
     ctx.lineWidth = 1;
-    ctx.setLineDash([2, 3]);
 
-    // Right Pitch Rod guide line
-    const rodX = this.calibration.pitchAntennaX * width;
-    ctx.strokeStyle = 'rgba(125, 211, 252, 0.28)';
+    // Volume Zone Guide (Left)
+    const loopNormX = 0.18;
+    const loopNormY = this.calibration.volumeLoopY;
+    const lx = loopNormX * width;
+    const ly = loopNormY * height;
+
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.28)';
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.04)';
     ctx.beginPath();
-    ctx.moveTo(rodX, height * 0.12);
-    ctx.lineTo(rodX, height * 0.85);
+    ctx.ellipse(lx, ly, width * 0.14, height * 0.08, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
 
-    // Left Volume Loop horizontal guide line
-    const loopY = this.calibration.volumeLoopY * height;
-    ctx.strokeStyle = 'rgba(245, 158, 11, 0.28)';
+    // Pitch Zone Guide (Right)
+    const antX = this.calibration.pitchAntennaX * width;
+    ctx.strokeStyle = 'rgba(219, 234, 254, 0.32)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(width * 0.06, loopY);
-    ctx.lineTo(width * 0.42, loopY);
+    ctx.moveTo(antX, height * 0.08);
+    ctx.lineTo(antX, height * 0.92);
     ctx.stroke();
 
     ctx.restore();
@@ -504,46 +603,50 @@ export class HandTracker {
     landmarks: NormalizedLandmark[],
     width: number,
     height: number,
-    primaryColor: string,
-    secondaryColor: string,
+    jointColor: string,
+    boneColor: string,
     label: string,
-    isPitch: boolean
+    isPitchHand: boolean
   ): void {
     ctx.save();
 
-    // 1. Whisper-thin skeletal bones
-    ctx.lineWidth = 1.25;
+    // 1. Draw Bones
+    ctx.strokeStyle = boneColor;
+    ctx.lineWidth = 1.2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.shadowBlur = 4;
-    ctx.shadowColor = primaryColor;
+    ctx.shadowColor = boneColor;
 
-    for (const [startIdx, endIdx] of HAND_CONNECTIONS) {
-      const p1 = landmarks[startIdx];
-      const p2 = landmarks[endIdx];
-
-      const grad = ctx.createLinearGradient(
-        p1.x * width,
-        p1.y * height,
-        p2.x * width,
-        p2.y * height
-      );
-      grad.addColorStop(0, primaryColor);
-      grad.addColorStop(1, secondaryColor);
-      ctx.strokeStyle = grad;
-
+    for (const [i, j] of HAND_CONNECTIONS) {
+      const p1 = landmarks[i];
+      const p2 = landmarks[j];
       ctx.beginPath();
       ctx.moveTo(p1.x * width, p1.y * height);
       ctx.lineTo(p2.x * width, p2.y * height);
       ctx.stroke();
     }
 
-    // 2. Thumb-to-index aerial vibrato line for Pitch hand
-    if (isPitch) {
+    // 2. Draw Joints
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < landmarks.length; i++) {
+      const p = landmarks[i];
+      const isTip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20;
+      const r = isTip ? 2.8 : (i === 0 ? 3.2 : 1.8);
+
+      ctx.beginPath();
+      ctx.arc(p.x * width, p.y * height, r, 0, Math.PI * 2);
+      ctx.fillStyle = isTip ? '#ffffff' : jointColor;
+      ctx.fill();
+    }
+
+    // 3. Clara Rockmore Vibrato Span Indicator (Pitch hand only)
+    if (isPitchHand) {
       const thumb = landmarks[4];
       const index = landmarks[8];
-      ctx.setLineDash([2, 2]);
       ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
       ctx.beginPath();
       ctx.moveTo(thumb.x * width, thumb.y * height);
       ctx.lineTo(index.x * width, index.y * height);
@@ -551,69 +654,47 @@ export class HandTracker {
       ctx.setLineDash([]);
     }
 
-    // 3. Delicate micro-joint nodes
-    ctx.shadowBlur = 0;
-    for (let i = 0; i < landmarks.length; i++) {
-      const lm = landmarks[i];
-      const px = lm.x * width;
-      const py = lm.y * height;
-      const isTip = i === 4 || i === 8 || i === 12 || i === 16 || i === 20;
-      const isKey = i === 0 || i === 4 || i === 8;
-
-      ctx.beginPath();
-      ctx.arc(px, py, isKey ? 3.2 : isTip ? 2.3 : 1.6, 0, Math.PI * 2);
-      ctx.fillStyle = isTip ? '#ffffff' : primaryColor;
-      ctx.fill();
-
-      if (isKey) {
-        ctx.beginPath();
-        ctx.arc(px, py, 5.5, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
-        ctx.lineWidth = 0.9;
-        ctx.stroke();
-      }
-    }
-
-    // 4. Micro label
+    // 4. Role Label Badge
     const wrist = landmarks[0];
-    ctx.font = '600 8px "JetBrains Mono", monospace';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.82)';
-    ctx.fillText(label, wrist.x * width - 14, Math.min(height - 4, wrist.y * height + 14));
+    const badgeX = wrist.x * width;
+    const badgeY = Math.min(height - 8, wrist.y * height + 14);
+
+    ctx.font = '600 7.5px "JetBrains Mono", monospace';
+    ctx.fillStyle = jointColor;
+    ctx.textAlign = 'center';
+    ctx.fillText(label, badgeX, badgeY);
 
     ctx.restore();
   }
 
   // --------------------------------------------------------------------------
-  // SIMULTANEOUS 2D MOUSE & TOUCH FALLBACK MODE (1:1 MONOTONIC)
+  // POINTER FALLBACK (MOUSE & TOUCH)
   // --------------------------------------------------------------------------
   private updateFromPointer(clientX: number, clientY: number): void {
     if (!this.mouseFallbackActive) return;
 
     const normX = Math.max(0.0, Math.min(1.0, clientX / window.innerWidth));
     const normY = Math.max(0.0, Math.min(1.0, clientY / window.innerHeight));
+
     const nowSec = performance.now() * 0.001;
+    const dt = Math.max(0.004, Math.min(0.1, nowSec - (this.lastPointerTime || nowSec)));
+    this.lastPointerTime = nowSec;
 
     this.gestureState.inputMode = 'mouse';
     this.gestureState.hasPitchHand = true;
     this.gestureState.hasVolumeHand = true;
-    this.gestureState.pitchLandmarks3D = null;
-    this.gestureState.volumeLandmarks3D = null;
 
-    // 1. Pitch mapped monotonically from horizontal cursor position X:
-    // Moving left (normX -> 0) lowers pitch and moves 3D probe left;
-    // Moving right (normX -> 1) raises pitch and moves 3D probe right!
+    // 1. Pitch mapped monotonically from X
     const rawPitchPos = Math.max(0.0, Math.min(1.0, (normX - 0.12) / 0.76));
     this.gestureState.pitchPos = this.pitchPosFilter.filter(rawPitchPos, nowSec);
     this.gestureState.pitchSpan = this.pitchSpanFilter.filter(this.mouseVibratoWheel, nowSec);
 
-    // 2. Volume mapped monotonically from vertical cursor position Y:
-    // Moving up (normY -> 0.15) raises volume; moving down (normY -> 0.85) mutes.
+    // 2. Volume mapped monotonically from Y
     const rawVolHeight = Math.max(0.0, Math.min(1.0, (0.84 - normY) / 0.68));
     this.gestureState.volumeHeight = this.volumeHeightFilter.filter(rawVolHeight, nowSec);
     this.gestureState.isFistMuted = this.isMouseDown || this.isSpaceMuted;
 
-    // 3. Strictly monotonic 3D World Coordinates for Pitch & Volume Probes
-    // Pitch probe moves horizontally across the right playing field [-0.05m, +0.42m]
+    // 3. Strictly monotonic 3D World Coordinates
     const pitchWorldX = -0.05 + normX * 0.46;
     const pitchWorldY =
       WORLD_SPACE.PITCH_ROD_Y_MIN +
@@ -625,7 +706,6 @@ export class HandTracker {
       0.0
     );
 
-    // Volume probe moves vertically above the left volume loop
     const volWorldX = WORLD_SPACE.VOLUME_LOOP_X + (normX - 0.5) * 0.08;
     const volWorldY = WORLD_SPACE.VOLUME_LOOP_Y + this.gestureState.volumeHeight * 0.34;
     this.gestureState.volumeWorldPos = new THREE.Vector3(volWorldX, volWorldY, 0.05);
@@ -634,6 +714,41 @@ export class HandTracker {
       WORLD_SPACE.VOLUME_LOOP_Y,
       0.0
     );
+
+    // Compute pointer velocity for gesture navigator
+    const pVx = (normX - this.lastPointerPos.x) / dt;
+    const pVy = (normY - this.lastPointerPos.y) / dt;
+    this.lastPointerPos = { x: normX, y: normY };
+
+    // Update navigator
+    this.gestureState.portalState = this.navigator.update(
+      nowSec,
+      dt,
+      true,
+      true,
+      null,
+      null,
+      { x: normX, y: normY },
+      { x: normX, y: normY },
+      new THREE.Vector3(pVx, pVy, 0),
+      new THREE.Vector3(pVx, pVy, 0)
+    );
+    this.gestureState.activeInstrument = this.navigator.getActiveInstrument();
+
+    // Synthesize kinematic states for multi-instrument mouse testing
+    const rightK = this.gestureState.rightKinematics;
+    rightK.hasHand = true;
+    rightK.rawPos.set(pitchWorldX, pitchWorldY, 0.05);
+    rightK.velocity.set(pVx, pVy, 0);
+    rightK.rubEnergy = Math.max(0, Math.min(1, Math.sqrt(pVx * pVx + pVy * pVy) * 0.8));
+    rightK.pinchAperture = Math.max(0, Math.min(1, (this.mouseVibratoWheel + 1.0) * 0.5));
+
+    const leftK = this.gestureState.leftKinematics;
+    leftK.hasHand = true;
+    leftK.rawPos.set(volWorldX, volWorldY, 0.05);
+    leftK.velocity.set(pVx, pVy, 0);
+    leftK.rubEnergy = rightK.rubEnergy;
+    leftK.pinchAperture = rightK.pinchAperture;
   }
 
   private setupMouseAndTouchFallback(): void {
@@ -653,12 +768,18 @@ export class HandTracker {
 
     window.addEventListener('mousedown', (e) => {
       if (!this.mouseFallbackActive) return;
-      // Ignore clicks on UI buttons
       if ((e.target as HTMLElement | null)?.closest('button, .sculptural-console, .modal-card')) {
         return;
       }
       this.isMouseDown = true;
       this.gestureState.isFistMuted = true;
+      // In mouse mode, clicking acts as a percussive strike for Handpan
+      this.rightKinematicObserver.triggerManualStrike(0.85);
+      this.leftKinematicObserver.triggerManualStrike(0.85);
+      this.gestureState.rightKinematics.isStrike = true;
+      this.gestureState.rightKinematics.strikeVelocity = 0.85;
+      this.gestureState.leftKinematics.isStrike = true;
+      this.gestureState.leftKinematics.strikeVelocity = 0.85;
     });
 
     window.addEventListener('mouseup', () => {
@@ -667,7 +788,6 @@ export class HandTracker {
       this.gestureState.isFistMuted = this.isSpaceMuted;
     });
 
-    // Mouse wheel adjusts aerial finger span vibrato in mouse mode
     window.addEventListener(
       'wheel',
       (e) => {
@@ -681,7 +801,6 @@ export class HandTracker {
       { passive: true }
     );
 
-    // Spacebar staccato mute in any mode
     window.addEventListener('keydown', (e) => {
       if (e.code === 'Space' && document.activeElement?.tagName !== 'BUTTON') {
         e.preventDefault();

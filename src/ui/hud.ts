@@ -1,23 +1,17 @@
 // ============================================================================
-// ROY'S THEREMIN — LUXURY NEUMORPHIC CONSOLE & MINIMALIST HUD (v2)
-// High-touch, sculptural 2026 audio-visual experience with Voice Profiles,
-// Spatial Calibration, and 3D Tracking Telemetry
+// ROY'S ATELIER OF SPATIAL INSTRUMENTS — NEUMORPHIC CONSOLE & HUD (v3)
+// 5-Instrument Stage Carousel with Zero-Click Overhead Portal & Wrist-Cross Navigation
 // ============================================================================
 
-import { ThereminEngine, SCALES, type VoiceProfile } from '../audio/thereminEngine';
 import type { HandTracker, HandGestureResult } from '../tracking/handTracker';
-
-const VOICE_LABELS: Record<VoiceProfile, string> = {
-  clara: 'Clara String',
-  aether: 'Pure Aether',
-  vocal: 'Vocal Choir',
-  moog: 'Moog Brass',
-};
+import type { InstrumentId } from '../types/atelier';
+import { INSTRUMENT_MANIFEST } from '../types/atelier';
 
 export class ThereminHUD {
   private container: HTMLElement;
-  private engine: ThereminEngine;
   private tracker: HandTracker;
+  private onSelectInstrument?: (id: InstrumentId) => void;
+  private onToggleAudio?: () => Promise<boolean>;
 
   // DOM Elements
   private noteNameEl!: HTMLElement;
@@ -30,6 +24,8 @@ export class ThereminHUD {
   private muteIndicatorEl!: HTMLElement;
   private trackingBadgeEl!: HTMLElement;
   private voiceLegendEl!: HTMLElement;
+  private instTitleEl!: HTMLElement;
+  private instYearEl!: HTMLElement;
   private oscCanvas!: HTMLCanvasElement;
   private oscCtx: CanvasRenderingContext2D | null = null;
   private hintLeftEl!: HTMLElement;
@@ -40,14 +36,23 @@ export class ThereminHUD {
   private guideModal!: HTMLElement;
   private cameraDockEl!: HTMLElement;
   private cameraLabelEl!: HTMLElement;
+  private stagePills: Record<InstrumentId, HTMLButtonElement> = {} as any;
+  private portalDwellBar!: HTMLElement;
 
   private waveBuffer = new Uint8Array(256);
   private lastTunedState = false;
+  private currentActiveInstrument: InstrumentId = 'theremin';
 
-  constructor(container: HTMLElement, engine: ThereminEngine, tracker: HandTracker) {
+  constructor(
+    container: HTMLElement,
+    tracker: HandTracker,
+    onSelectInstrument?: (id: InstrumentId) => void,
+    onToggleAudio?: () => Promise<boolean>
+  ) {
     this.container = container;
-    this.engine = engine;
     this.tracker = tracker;
+    this.onSelectInstrument = onSelectInstrument;
+    this.onToggleAudio = onToggleAudio;
 
     this.buildDOM();
     this.setupListeners();
@@ -55,19 +60,50 @@ export class ThereminHUD {
 
   private buildDOM(): void {
     this.container.innerHTML = `
-      <!-- Top Navigation & Neumorphic Header Bar -->
+      <!-- Top Navigation & Neumorphic 5-Instrument Stage Bar -->
       <header class="hud-header">
         <div class="brand-group">
           <div class="pilot-lamp">
             <span class="pilot-glow"></span>
           </div>
           <div class="brand-titles">
-            <h1 class="brand-name">Roy’s Theremin</h1>
-            <span class="brand-tag">Acoustic Field Synthesizer · v2</span>
+            <h1 class="brand-name">Roy’s Atelier</h1>
+            <span class="brand-tag">Spatial Instruments · v3</span>
           </div>
         </div>
 
-        <!-- Tactile Control Bar -->
+        <!-- 5-Instrument Stage Carousel Navigation -->
+        <div class="stage-nav-cluster">
+          <div class="portal-guidance-pill" title="Raise either hand above this bar or cross wrists to switch">
+            <span class="portal-spark">✦</span>
+            <span class="portal-text">Zero-Click Stage: Hover at top or cross wrists to switch</span>
+          </div>
+          <div class="stage-segmented-control" role="tablist" aria-label="Instruments Stage">
+            <button class="stage-btn active" data-inst="theremin" id="pill-theremin">
+              <span class="stage-dot" style="background: #f59e0b"></span>
+              <span class="stage-label">Theremin</span>
+            </button>
+            <button class="stage-btn" data-inst="cristal" id="pill-cristal">
+              <span class="stage-dot" style="background: #38bdf8"></span>
+              <span class="stage-label">Cristal</span>
+            </button>
+            <button class="stage-btn" data-inst="handpan" id="pill-handpan">
+              <span class="stage-dot" style="background: #10b981"></span>
+              <span class="stage-label">Handpan</span>
+            </button>
+            <button class="stage-btn" data-inst="martenot" id="pill-martenot">
+              <span class="stage-dot" style="background: #ec4899"></span>
+              <span class="stage-label">Martenot</span>
+            </button>
+            <button class="stage-btn" data-inst="laserharp" id="pill-laserharp">
+              <span class="stage-dot" style="background: #8b5cf6"></span>
+              <span class="stage-label">Laser Harp</span>
+            </button>
+            <div id="portal-dwell-bar" class="portal-dwell-bar"></div>
+          </div>
+        </div>
+
+        <!-- System Controls -->
         <div class="control-cluster">
           <!-- Audio Toggle Button -->
           <button id="btn-audio" class="neumorphic-btn btn-audio" aria-label="Toggle Audio">
@@ -82,27 +118,12 @@ export class ThereminHUD {
           </button>
 
           <!-- Spatial Calibrate Button -->
-          <button id="btn-calibrate" class="neumorphic-btn btn-calibrate" title="Calibrate hand neutral center" aria-label="Calibrate">
+          <button id="btn-calibrate" class="neumorphic-btn btn-calibrate" title="Calibrate reach" aria-label="Calibrate">
             <span class="btn-text">Calibrate</span>
           </button>
 
-          <!-- Segmented Voice Profile Selector -->
-          <div class="segmented-control voice-control" role="group" aria-label="Voice Timbre">
-            <button class="seg-btn voice-btn active" data-voice="clara" title="Clara Rockmore Warm Cello Formant">Clara</button>
-            <button class="seg-btn voice-btn" data-voice="aether" title="1929 RCA Pure Heterodyne Tube">Aether</button>
-            <button class="seg-btn voice-btn" data-voice="vocal" title="Soprano Choir Vowel Formants">Vocal</button>
-            <button class="seg-btn voice-btn" data-voice="moog" title="Moog Etherwave Rich Brass">Moog</button>
-          </div>
-
-          <!-- Segmented Scale Switch -->
-          <div class="segmented-control scale-control" role="group" aria-label="Pitch Quantization">
-            <button class="seg-btn scale-btn active" data-mode="continuous">Analog</button>
-            <button class="seg-btn scale-btn" data-mode="soft">Magnetic</button>
-            <button class="seg-btn scale-btn" data-mode="pentatonic">Pentatonic</button>
-          </div>
-
           <!-- Technique Guide Button -->
-          <button id="btn-guide" class="neumorphic-btn btn-circle" title="Technique Guide" aria-label="Guide">
+          <button id="btn-guide" class="neumorphic-btn btn-circle" title="Organology Guide" aria-label="Guide">
             <span class="info-mark">?</span>
           </button>
         </div>
@@ -113,10 +134,10 @@ export class ThereminHUD {
         <div class="sculptural-console">
           <!-- Top Row: Precision Pitch & Dynamics -->
           <div class="console-top-row">
-            <!-- Left: Volume Dynamics -->
+            <!-- Left: Dynamics -->
             <div class="dynamics-module">
               <div class="module-header">
-                <span class="module-label">Amplitude</span>
+                <span class="module-label">Kinetic Amplitude</span>
                 <span id="mute-indicator" class="mute-indicator">Muted</span>
               </div>
               <div class="groove-meter">
@@ -137,20 +158,24 @@ export class ThereminHUD {
                 <span id="freq-text" class="freq-val">440.0</span>
                 <span class="freq-unit">Hz</span>
               </div>
+              <div class="inst-subtitle-badge">
+                <span id="inst-title" class="inst-title">Moog Etherwave</span>
+                <span id="inst-year" class="inst-year">1929 / 1996</span>
+              </div>
             </div>
 
             <!-- Right: Cathode Waveform Scope -->
             <div class="scope-module">
               <div class="module-header">
-                <span class="module-label">Resonance</span>
-                <span id="voice-legend" class="sub-legend">Clara String</span>
+                <span class="module-label">Acoustic Core</span>
+                <span id="voice-legend" class="sub-legend">Heterodyne Dual Osc</span>
               </div>
               <div class="scope-aperture">
                 <canvas id="osc-canvas" class="osc-canvas" width="160" height="38"></canvas>
               </div>
               <div class="module-footer">
-                <span class="sub-metric">12AX7</span>
-                <span class="sub-legend">Hall Convolver</span>
+                <span class="sub-metric">Stereo Convolver</span>
+                <span class="sub-legend">Concert Hall</span>
               </div>
             </div>
           </div>
@@ -178,24 +203,24 @@ export class ThereminHUD {
         </div>
       </main>
 
-      <!-- Spatial Guidance Hints (Discreet, fade on engagement) -->
+      <!-- Spatial Guidance Hints -->
       <aside id="hint-left" class="spatial-hint hint-left">
-        <span class="hint-key">Left Hand · Volume Loop</span>
-        <span class="hint-action">Elevate for crescendo · Clench fist to mute</span>
+        <span class="hint-key">Left Hand</span>
+        <span class="hint-action" id="hint-left-action">Left: Elevate for volume · Fist to staccato mute</span>
       </aside>
 
       <aside id="hint-right" class="spatial-hint hint-right">
-        <span class="hint-key">Right Hand · Pitch Rod</span>
-        <span class="hint-action">Move right to raise pitch · Finger span shapes vibrato</span>
+        <span class="hint-key">Right Hand</span>
+        <span class="hint-action" id="hint-right-action">Right: Proximity sets pitch · Finger pinch shapes vibrato</span>
       </aside>
 
-      <!-- Minimalist Technique Modal -->
+      <!-- Organology & Technique Modal -->
       <div id="guide-modal" class="modal-backdrop hidden">
         <div class="modal-card">
           <div class="modal-header">
             <div class="modal-title-group">
-              <h2 class="modal-title">Léon Theremin & Clara Rockmore</h2>
-              <span class="modal-subtitle">Precision 3D Non-Contact Performance · v2</span>
+              <h2 class="modal-title">Roy’s Atelier of Spatial Instruments</h2>
+              <span class="modal-subtitle">Organology, 1€ Kinematics & Zero-Click Navigation</span>
             </div>
             <button id="btn-close-guide" class="modal-close-btn" aria-label="Close">✕</button>
           </div>
@@ -203,24 +228,28 @@ export class ThereminHUD {
             <div class="guide-grid">
               <div class="guide-pillar">
                 <div class="pillar-num">01</div>
-                <h3 class="pillar-title">Right Hand: 1:1 Spatial Pitch & Aerial Fingering</h3>
-                <p>Moving your right hand toward the vertical pitch rod on the right raises the pitch from C2 to C7 with zero-latency 1€ adaptive filtering. Open or pinch your thumb and index finger to articulate Clara Rockmore microtonal vibrato independent of camera depth.</p>
+                <h3 class="pillar-title">Zero-Click Stage Navigation</h3>
+                <p>Raise either hand into the <strong>top Crown Portal</strong> above the stage pills to fill the golden dwell ring (0.75s) and switch instruments hands-free. Or cross both wrists in front of the camera for 0.6s to quick-cycle to the next instrument.</p>
               </div>
 
               <div class="guide-pillar">
                 <div class="pillar-num">02</div>
-                <h3 class="pillar-title">Left Hand: Volume Loop & Single-Hand Assist</h3>
-                <p>Hovering near the left horizontal loop grounds the field (silence); lifting upward swells the volume. Clench a fist for crisp staccato mute. If only your right hand is raised, <strong>Single-Hand Assist</strong> automatically shapes expression from hand elevation.</p>
+                <h3 class="pillar-title">5 Rare World Instruments</h3>
+                <p><strong>Theremin (1929):</strong> Capacitive proximity pitch & volume.<br/>
+                   <strong>Cristal Baschet (1952):</strong> Tangential rubbing velocity excites 12 glass rods.<br/>
+                   <strong>Swiss Handpan (2000):</strong> Mid-air downward acceleration strike on 9 tone fields.<br/>
+                   <strong>Ondes Martenot (1928):</strong> Sliding ribbon ring pitch + Touche expression drawer.<br/>
+                   <strong>Laser Harp (1981):</strong> Break and pluck 10 volumetric light beams in mid-air.</p>
               </div>
 
               <div class="guide-pillar">
                 <div class="pillar-num">03</div>
-                <h3 class="pillar-title">Formant Voices & Spatial Calibration</h3>
-                <p>Switch between <strong>Clara</strong> (warm cello), <strong>Aether</strong> (1929 RCA tube), <strong>Vocal</strong> (choir formants), and <strong>Moog</strong> (rich brass). Click <strong>Calibrate</strong> while holding your hands in a comfortable posture to center the sensing field to your space.</p>
+                <h3 class="pillar-title">Zero Physical Resistance (Air Physics)</h3>
+                <p>Unlike virtual pianos, every instrument in Roy’s Atelier was specifically selected because continuous spatial movement, friction, and acceleration define its authentic acoustic physics.</p>
               </div>
             </div>
             <footer class="modal-footer">
-              <span class="fallback-note">Desktop Pointer Mode: Move mouse horizontally for Pitch, vertically for Volume, Scroll Wheel for Vibrato, and Click or press Spacebar for Staccato Mute. Click the camera dock to expand.</span>
+              <span class="fallback-note">Desktop: Move mouse to play · Scroll wheel for vibrato · Click/Space to mute or strike Handpan. Click stage pills to switch directly.</span>
             </footer>
           </div>
         </div>
@@ -238,29 +267,48 @@ export class ThereminHUD {
     this.muteIndicatorEl = this.container.querySelector('#mute-indicator')!;
     this.trackingBadgeEl = this.container.querySelector('#tracking-badge')!;
     this.voiceLegendEl = this.container.querySelector('#voice-legend')!;
+    this.instTitleEl = this.container.querySelector('#inst-title')!;
+    this.instYearEl = this.container.querySelector('#inst-year')!;
     this.oscCanvas = this.container.querySelector('#osc-canvas') as HTMLCanvasElement;
     this.oscCtx = this.oscCanvas.getContext('2d');
-    this.hintLeftEl = this.container.querySelector('#hint-left')!;
-    this.hintRightEl = this.container.querySelector('#hint-right')!;
+    this.hintLeftEl = this.container.querySelector('#hint-left-action')!;
+    this.hintRightEl = this.container.querySelector('#hint-right-action')!;
     this.audioBtn = this.container.querySelector('#btn-audio') as HTMLButtonElement;
     this.cameraBtn = this.container.querySelector('#btn-camera') as HTMLButtonElement;
     this.calibrateBtn = this.container.querySelector('#btn-calibrate') as HTMLButtonElement;
     this.guideModal = this.container.querySelector('#guide-modal')!;
+    this.portalDwellBar = this.container.querySelector('#portal-dwell-bar')!;
 
     this.cameraDockEl = document.getElementById('camera-dock')!;
     this.cameraLabelEl = document.getElementById('camera-label')!;
+
+    const ids: InstrumentId[] = ['theremin', 'cristal', 'handpan', 'martenot', 'laserharp'];
+    for (const id of ids) {
+      this.stagePills[id] = this.container.querySelector(`#pill-${id}`) as HTMLButtonElement;
+    }
   }
 
   private setupListeners(): void {
+    // Stage navigation buttons (click fallback)
+    const ids: InstrumentId[] = ['theremin', 'cristal', 'handpan', 'martenot', 'laserharp'];
+    for (const id of ids) {
+      const btn = this.stagePills[id];
+      if (btn) {
+        btn.addEventListener('click', () => {
+          this.setActiveInstrument(id);
+          if (this.onSelectInstrument) {
+            this.onSelectInstrument(id);
+          }
+        });
+      }
+    }
+
     // Audio toggle
     this.audioBtn.addEventListener('click', async () => {
-      const isRunning = this.engine.getIsRunning();
-      if (!isRunning) {
-        await this.engine.initAudio();
-        this.audioBtn.classList.add('active');
-      } else {
-        this.engine.stop();
-        this.audioBtn.classList.remove('active');
+      if (this.onToggleAudio) {
+        const active = await this.onToggleAudio();
+        if (active) this.audioBtn.classList.add('active');
+        else this.audioBtn.classList.remove('active');
       }
     });
 
@@ -271,14 +319,13 @@ export class ThereminHUD {
       this.cameraBtn.disabled = false;
 
       if (active) {
-        // Also ensure audio is started when user engages Vision so they immediately hear their hands
-        if (!this.engine.getIsRunning()) {
-          await this.engine.initAudio();
+        if (this.onToggleAudio) {
+          await this.onToggleAudio();
           this.audioBtn.classList.add('active');
         }
         this.cameraBtn.classList.add('active');
         this.cameraDockEl.classList.add('active');
-        if (this.cameraLabelEl) this.cameraLabelEl.textContent = '1€ Tracking Active';
+        if (this.cameraLabelEl) this.cameraLabelEl.textContent = '1€ Kinematics Active';
       } else {
         this.cameraBtn.classList.remove('active');
         this.cameraDockEl.classList.remove('active');
@@ -286,7 +333,7 @@ export class ThereminHUD {
       }
     });
 
-    // Spatial Calibrate button
+    // Calibration
     this.calibrateBtn.addEventListener('click', () => {
       const labelSpan = this.calibrateBtn.querySelector('.btn-text');
       const result = this.tracker.calibrateSpace();
@@ -305,43 +352,11 @@ export class ThereminHUD {
       }
     });
 
-    // Click camera dock to toggle expanded preview
+    // Camera dock expand
     this.cameraDockEl.addEventListener('click', () => {
       this.cameraDockEl.classList.toggle('expanded');
       const isExpanded = this.cameraDockEl.classList.contains('expanded');
       this.tracker.resize(isExpanded ? 320 : 220, isExpanded ? 180 : 124);
-    });
-
-    // Voice Profile buttons
-    const voiceButtons = this.container.querySelectorAll<HTMLButtonElement>('.voice-btn');
-    voiceButtons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        voiceButtons.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        const voiceId = (btn.dataset.voice || 'clara') as VoiceProfile;
-        this.engine.setVoiceProfile(voiceId);
-        this.voiceLegendEl.textContent = VOICE_LABELS[voiceId];
-      });
-    });
-
-    // Segmented Scale buttons
-    const scaleButtons = this.container.querySelectorAll<HTMLButtonElement>('.scale-btn');
-    scaleButtons.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        scaleButtons.forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        const mode = btn.dataset.mode;
-        if (mode === 'continuous') {
-          this.engine.quantizeMode = 'continuous';
-          this.engine.activeScale = SCALES.CHROMATIC;
-        } else if (mode === 'soft') {
-          this.engine.quantizeMode = 'soft';
-          this.engine.activeScale = SCALES.CHROMATIC;
-        } else if (mode === 'pentatonic') {
-          this.engine.quantizeMode = 'soft';
-          this.engine.activeScale = SCALES.PENTATONIC_MAJ;
-        }
-      });
     });
 
     // Guide Modal
@@ -354,16 +369,46 @@ export class ThereminHUD {
     });
   }
 
+  public setActiveInstrument(id: InstrumentId): void {
+    if (this.currentActiveInstrument === id) return;
+    this.currentActiveInstrument = id;
+
+    // Update active pill
+    for (const [btnId, btn] of Object.entries(this.stagePills)) {
+      if (btnId === id) btn.classList.add('active');
+      else btn.classList.remove('active');
+    }
+
+    const manifest = INSTRUMENT_MANIFEST[id];
+    this.instTitleEl.textContent = manifest.name;
+    this.instYearEl.textContent = manifest.year;
+    this.voiceLegendEl.textContent = manifest.category;
+
+    this.hintLeftEl.textContent = manifest.leftHint;
+    this.hintRightEl.textContent = manifest.rightHint;
+  }
+
   // --------------------------------------------------------------------------
   // PER-FRAME UPDATE LOOP
   // --------------------------------------------------------------------------
-  public update(gestures: HandGestureResult, targetFreq: number, currentGain: number): void {
+  public update(
+    gestures: HandGestureResult,
+    targetFreq: number,
+    currentGain: number,
+    activeInstrumentId: InstrumentId,
+    getWaveformData: (buf: Uint8Array) => void
+  ): void {
+    if (this.currentActiveInstrument !== activeInstrumentId) {
+      this.setActiveInstrument(activeInstrumentId);
+    }
+
     // 1. Note & Frequency Display
-    const noteInfo = ThereminEngine.detectNote(targetFreq);
-    this.noteNameEl.textContent = noteInfo.noteName;
     this.freqEl.textContent = targetFreq.toFixed(1);
 
     // Cent Deviation Needle
+    const noteInfo = this.detectNote(targetFreq);
+    this.noteNameEl.textContent = noteInfo.name;
+
     const centsClamped = Math.max(-50, Math.min(50, noteInfo.cents));
     const needlePercent = ((centsClamped + 50) / 100) * 100;
     this.centsNeedleEl.style.left = `${needlePercent}%`;
@@ -387,7 +432,7 @@ export class ThereminHUD {
       ? `In Tune (±${Math.abs(noteInfo.cents)}c)`
       : `${sign}${noteInfo.cents}c`;
 
-    // 2. Dynamics / Volume Meter & Tracking Mode Telemetry
+    // 2. Dynamics / Volume Meter & Tracking Mode
     const volumePercent = Math.min(100, Math.max(0, currentGain * 100));
     this.vuFillEl.style.width = `${volumePercent}%`;
     this.vuValEl.textContent = `${Math.round(volumePercent)}%`;
@@ -411,24 +456,39 @@ export class ThereminHUD {
       this.muteIndicatorEl.classList.remove('active');
     }
 
-    // 3. Spatial Hint Fading
-    if (gestures.hasVolumeHand) {
-      this.hintLeftEl.classList.add('dimmed');
+    // 3. Overhead Crown Portal Dwell Progress Visualizer
+    const portal = gestures.portalState;
+    if (portal && portal.isActive && portal.targetInstrument) {
+      const targetPill = this.stagePills[portal.targetInstrument];
+      if (targetPill) {
+        const rect = targetPill.getBoundingClientRect();
+        const parentRect = this.portalDwellBar.parentElement?.getBoundingClientRect() || { left: 0 };
+        const leftOffset = rect.left - parentRect.left;
+        this.portalDwellBar.style.left = `${leftOffset}px`;
+        this.portalDwellBar.style.width = `${rect.width * portal.progress}px`;
+        this.portalDwellBar.style.opacity = '1';
+      }
     } else {
-      this.hintLeftEl.classList.remove('dimmed');
-    }
-
-    if (gestures.hasPitchHand) {
-      this.hintRightEl.classList.add('dimmed');
-    } else {
-      this.hintRightEl.classList.remove('dimmed');
+      this.portalDwellBar.style.opacity = '0';
+      this.portalDwellBar.style.width = '0px';
     }
 
     // 4. Oscilloscope
-    this.drawOscilloscope(currentGain);
+    this.drawOscilloscope(currentGain, getWaveformData);
   }
 
-  private drawOscilloscope(gain: number): void {
+  private detectNote(freq: number): { name: string; cents: number } {
+    if (freq <= 0) return { name: '--', cents: 0 };
+    const semitonesFromA4 = 12 * Math.log2(freq / 440);
+    const midi = Math.round(69 + semitonesFromA4);
+    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const name = `${noteNames[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+    const targetFreq = 440 * Math.pow(2, (midi - 69) / 12);
+    const cents = Math.round(1200 * Math.log2(freq / targetFreq));
+    return { name, cents };
+  }
+
+  private drawOscilloscope(gain: number, getWaveformData: (buf: Uint8Array) => void): void {
     const ctx = this.oscCtx;
     if (!ctx) return;
     const w = this.oscCanvas.width;
@@ -454,12 +514,13 @@ export class ThereminHUD {
       return;
     }
 
-    this.engine.getWaveformData(this.waveBuffer);
+    getWaveformData(this.waveBuffer);
 
+    const manifest = INSTRUMENT_MANIFEST[this.currentActiveInstrument];
     ctx.lineWidth = 1.4;
-    ctx.strokeStyle = '#f59e0b'; // Warm incandescent tube waveform
+    ctx.strokeStyle = manifest.accentColor;
     ctx.shadowBlur = 6;
-    ctx.shadowColor = 'rgba(245, 158, 11, 0.5)';
+    ctx.shadowColor = manifest.accentColor;
     ctx.beginPath();
 
     const sliceWidth = w / this.waveBuffer.length;
